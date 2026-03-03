@@ -1,0 +1,302 @@
+---
+title: roles
+description: Reference documentation for the roles collector
+---
+
+The `roles` collector exposes connection limit settings for PostgreSQL database roles.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### pg_roles_connection_limit
+
+**Type:** Gauge  
+**Description:** Connection limit set for the role
+
+**Labels:**
+- `rolname` - Role (user) name
+
+**Special Values:**
+- `-1` - Unlimited connections (default for most roles)
+- `0` - Role cannot connect (e.g., group roles)
+- Positive integer - Maximum concurrent connections allowed for this role
+
+## SQL Query
+
+```sql
+SELECT 
+  pg_roles.rolname, 
+  pg_roles.rolconnlimit 
+FROM pg_roles
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_roles` system catalog (granted to `PUBLIC` by default)
+
+No special permissions required - all users can query `pg_roles`.
+
+## Example Output
+
+```
+pg_roles_connection_limit{rolname="postgres"} -1
+pg_roles_connection_limit{rolname="app_user"} 100
+pg_roles_connection_limit{rolname="readonly_user"} 10
+pg_roles_connection_limit{rolname="admin"} -1
+pg_roles_connection_limit{rolname="backup_role"} 2
+pg_roles_connection_limit{rolname="group_role"} 0
+```
+
+## Use Cases
+
+### Monitor Connection Limit Enforcement
+
+```promql
+# Roles with connection limits
+pg_roles_connection_limit > 0
+
+# Roles with unlimited connections
+pg_roles_connection_limit == -1
+
+# Non-login roles (group roles)
+pg_roles_connection_limit == 0
+```
+
+### Track Connection Usage vs Limits
+
+Combine with connection statistics to monitor utilization:
+
+```promql
+# Compare active connections to limits (requires stat_activity collector)
+pg_stat_activity_count{state="active"} / 
+on(rolname) pg_roles_connection_limit > 0.8
+```
+
+This identifies roles approaching their connection limits.
+
+### Audit Connection Configuration
+
+```promql
+# List all roles and their limits
+group by (rolname) (pg_roles_connection_limit)
+
+# Count roles by limit type
+count by (connection_limit) (pg_roles_connection_limit)
+```
+
+## Configuration Best Practices
+
+### Setting Connection Limits
+
+Connection limits help prevent:
+- Resource exhaustion from connection leaks
+- Denial of service from runaway applications
+- Single applications consuming all available connections
+
+```sql
+-- Set connection limit for application user
+ALTER ROLE app_user CONNECTION LIMIT 50;
+
+-- Set connection limit for batch processing user
+ALTER ROLE batch_user CONNECTION LIMIT 5;
+
+-- Remove connection limit (unlimited)
+ALTER ROLE admin CONNECTION LIMIT -1;
+
+-- Prevent direct login (group role)
+ALTER ROLE reporting_group CONNECTION LIMIT 0;
+```
+
+### Recommended Limits
+
+| Role Type | Recommended Limit | Rationale |
+|-----------|------------------|----------|
+| Application user | 50-200 | Based on connection pool size |
+| Read-only user | 10-50 | Reporting queries, dashboards |
+| Admin user | -1 (unlimited) | Emergency access |
+| Batch/ETL user | 2-10 | Limited concurrency needed |
+| Group role | 0 | Cannot login directly |
+| Monitoring user | 2-5 | Only needs a few connections |
+
+### Capacity Planning
+
+Ensure total limits don't exceed `max_connections`:
+
+```promql
+# Sum of all role limits (excluding -1/unlimited)
+sum(pg_roles_connection_limit > 0)
+
+# Compare to max_connections setting
+pg_settings_max_connections
+```
+
+<Warning>
+If the sum of all role limits exceeds `max_connections`, some roles may be unable to connect even though they haven't reached their individual limit.
+</Warning>
+
+## Alert Examples
+
+```yaml
+- alert: RoleNearConnectionLimit
+  expr: |
+    (pg_stat_activity_count / on(rolname) pg_roles_connection_limit) > 0.9
+    and pg_roles_connection_limit > 0
+  for: 5m
+  annotations:
+    summary: "Role {{ $labels.rolname }} near connection limit"
+    description: "Role using {{ $value | humanizePercentage }} of allowed connections"
+
+- alert: UnlimitedConnectionRole
+  expr: |
+    pg_roles_connection_limit{rolname!~"postgres|admin.*"} == -1
+  annotations:
+    summary: "Non-admin role has unlimited connections"
+    description: "Role {{ $labels.rolname }} should have a connection limit"
+```
+
+## Understanding Role Connection Limits
+
+### How Connection Limits Work
+
+1. **Check on connect**: PostgreSQL checks the limit when a role attempts to connect
+2. **Not enforced retroactively**: Changing a limit doesn't disconnect existing sessions
+3. **Superusers exempt**: Superuser roles can always connect (ignoring `max_connections` reserve slots)
+4. **Per-role, not per-database**: The limit applies across all databases
+
+### Limit Value Meanings
+
+```sql
+-- Query to see role properties
+SELECT 
+  rolname,
+  rolconnlimit,
+  CASE 
+    WHEN rolconnlimit = -1 THEN 'Unlimited'
+    WHEN rolconnlimit = 0 THEN 'Cannot login'
+    ELSE rolconnlimit::text || ' connections'
+  END as limit_description,
+  rolcanlogin as can_login,
+  rolsuper as is_superuser
+FROM pg_roles
+ORDER BY rolname;
+```
+
+### Interaction with Database Connection Limits
+
+Both role and database connection limits are enforced:
+
+```sql
+-- Database limit
+ALTER DATABASE myapp CONNECTION LIMIT 100;
+
+-- Role limit  
+ALTER ROLE app_user CONNECTION LIMIT 50;
+```
+
+If `app_user` connects to `myapp`:
+- Role limit (50) is checked
+- Database limit (100) is also checked
+- Whichever is more restrictive applies
+
+## Troubleshooting
+
+### User Cannot Connect
+
+If a user reports connection failures:
+
+```sql
+-- Check role's connection limit
+SELECT rolname, rolconnlimit, rolcanlogin 
+FROM pg_roles 
+WHERE rolname = 'username';
+
+-- Check current connections for the role
+SELECT count(*) 
+FROM pg_stat_activity 
+WHERE usename = 'username';
+
+-- Increase limit if needed
+ALTER ROLE username CONNECTION LIMIT 100;
+```
+
+### Finding Roles Without Limits
+
+```sql
+-- Application roles that should have limits
+SELECT rolname, rolconnlimit
+FROM pg_roles
+WHERE rolconnlimit = -1  -- unlimited
+  AND rolcanlogin = true  -- can login
+  AND NOT rolsuper        -- not superuser
+ORDER BY rolname;
+```
+
+### Monitoring Active vs Available Connections
+
+```sql
+-- See connection usage per role
+SELECT 
+  usename,
+  count(*) as active_connections,
+  r.rolconnlimit,
+  CASE 
+    WHEN r.rolconnlimit = -1 THEN 'unlimited'
+    ELSE round(100.0 * count(*) / r.rolconnlimit, 1)::text || '%'
+  END as usage_percent
+FROM pg_stat_activity a
+JOIN pg_roles r ON a.usename = r.rolname
+WHERE r.rolconnlimit != 0
+GROUP BY usename, r.rolconnlimit
+ORDER BY count(*) DESC;
+```
+
+## Common Connection Limit Patterns
+
+### Connection Pooling
+
+When using connection poolers (PgBouncer, PgPool):
+- Set role limit higher than pooler's `max_client_conn`
+- Account for direct connections (monitoring, admin)
+- Leave buffer for emergency access
+
+```bash
+# Example: PgBouncer with 100 pooled connections
+# Set role limit to 120 (100 pool + 20 buffer)
+ALTER ROLE app_user CONNECTION LIMIT 120;
+```
+
+### Multi-Tenant Applications
+
+For multi-tenant setups with role-per-tenant:
+
+```sql
+-- Create tenant role with limited connections
+CREATE ROLE tenant_acme LOGIN CONNECTION LIMIT 20;
+
+-- Monitor all tenant roles
+SELECT 
+  rolname, 
+  rolconnlimit,
+  count(a.pid) as current_connections
+FROM pg_roles r
+LEFT JOIN pg_stat_activity a ON r.rolname = a.usename
+WHERE rolname LIKE 'tenant_%'
+GROUP BY rolname, rolconnlimit
+ORDER BY current_connections DESC;
+```
+
+## Related
+
+- [pg_roles catalog](https://www.postgresql.org/docs/current/view-pg-roles.html)
+- [ALTER ROLE documentation](https://www.postgresql.org/docs/current/sql-alterrole.html)
+- [Connection management](https://www.postgresql.org/docs/current/runtime-config-connection.html)
+- [database collector](/reference/collectors/database) - Database connection limits
+- [stat-activity-autovacuum collector](/reference/collectors/stat-activity-autovacuum) - Active connection monitoring

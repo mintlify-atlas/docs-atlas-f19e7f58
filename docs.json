@@ -80,6 +80,7 @@
           {
             "group": "Collectors",
             "pages": [
+              "reference/collectors/buffercache-summary",
               "reference/collectors/database",
               "reference/collectors/database-wraparound",
               "reference/collectors/locks",
@@ -88,6 +89,7 @@
               "reference/collectors/process-idle",
               "reference/collectors/replication",
               "reference/collectors/replication-slot",
+              "reference/collectors/roles",
               "reference/collectors/stat-activity-autovacuum",
               "reference/collectors/stat-bgwriter",
               "reference/collectors/stat-checkpointer",

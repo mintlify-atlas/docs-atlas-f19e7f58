@@ -1,0 +1,281 @@
+---
+title: buffercache-summary
+description: Reference documentation for the buffercache-summary collector
+---
+
+The `buffercache_summary` collector exposes summary statistics from the `pg_buffercache` extension, providing insights into PostgreSQL's shared buffer cache usage.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.buffercache-summary`
+
+<Warning>
+This collector requires the `pg_buffercache` extension to be installed. It is disabled by default.
+</Warning>
+
+## Prerequisites
+
+The `pg_buffercache` extension must be installed:
+
+```sql
+CREATE EXTENSION pg_buffercache;
+```
+
+<Info>
+The `pg_buffercache_summary()` function does not take locks, making it safe for production use.
+</Info>
+
+## Metrics
+
+### pg_buffercache_summary_buffers_used
+
+**Type:** Gauge  
+**Description:** Number of used shared buffers
+
+**Labels:** None
+
+### pg_buffercache_summary_buffers_unused
+
+**Type:** Gauge  
+**Description:** Number of unused shared buffers
+
+**Labels:** None
+
+### pg_buffercache_summary_buffers_dirty
+
+**Type:** Gauge  
+**Description:** Number of dirty shared buffers
+
+**Labels:** None
+
+Dirty buffers contain modified data that has not yet been written to disk.
+
+### pg_buffercache_summary_buffers_pinned
+
+**Type:** Gauge  
+**Description:** Number of pinned shared buffers
+
+**Labels:** None
+
+Pinned buffers are currently in use by active queries and cannot be evicted.
+
+### pg_buffercache_summary_usagecount_avg
+
+**Type:** Gauge  
+**Description:** Average usage count of used shared buffers
+
+**Labels:** None
+
+The usage count indicates how frequently a buffer has been accessed. Higher values mean the buffer is "hotter" and less likely to be evicted.
+
+## SQL Query
+
+```sql
+SELECT
+  buffers_used,
+  buffers_unused,
+  buffers_dirty,
+  buffers_pinned,
+  usagecount_avg
+FROM
+  pg_buffercache_summary()
+```
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 16+
+
+<Warning>
+The `pg_buffercache_summary()` function was introduced in PostgreSQL 16. This collector will not collect metrics on earlier versions.
+</Warning>
+
+## Required Permissions
+
+The monitoring user needs:
+- `pg_buffercache` extension installed
+- Execute permission on `pg_buffercache_summary()` function
+- Typically requires `pg_monitor` role or superuser privileges
+
+Grant permissions:
+```sql
+GRANT EXECUTE ON FUNCTION pg_buffercache_summary() TO monitoring_user;
+-- OR
+GRANT pg_monitor TO monitoring_user;
+```
+
+## Example Output
+
+```
+pg_buffercache_summary_buffers_used 120000
+pg_buffercache_summary_buffers_unused 11616
+pg_buffercache_summary_buffers_dirty 2500
+pg_buffercache_summary_buffers_pinned 15
+pg_buffercache_summary_usagecount_avg 3.2
+```
+
+## Use Cases
+
+### Monitor Buffer Cache Utilization
+
+```promql
+# Percentage of buffers in use
+pg_buffercache_summary_buffers_used / 
+(pg_buffercache_summary_buffers_used + pg_buffercache_summary_buffers_unused) * 100
+
+# Buffer cache utilization rate
+(pg_buffercache_summary_buffers_used + pg_buffercache_summary_buffers_unused) > 0
+```
+
+### Track Dirty Buffer Ratio
+
+```promql
+# Percentage of dirty buffers
+pg_buffercache_summary_buffers_dirty / 
+pg_buffercache_summary_buffers_used * 100
+```
+
+High dirty buffer ratios may indicate:
+- Checkpointer or background writer can't keep up
+- Heavy write workload
+- Need to tune `bgwriter_*` or checkpoint parameters
+
+### Monitor Pinned Buffers
+
+```promql
+# Pinned buffer count
+pg_buffercache_summary_buffers_pinned
+
+# Percentage of buffers pinned
+pg_buffercache_summary_buffers_pinned / 
+pg_buffercache_summary_buffers_used * 100
+```
+
+Consistently high pinned buffer counts may indicate:
+- Long-running queries holding buffers
+- Insufficient buffer cache size
+- Connection pooling issues
+
+### Average Buffer Usage Count
+
+```promql
+# Track buffer cache efficiency
+pg_buffercache_summary_usagecount_avg
+```
+
+A higher average usage count indicates better buffer cache efficiency (frequently accessed data stays cached).
+
+## Tuning Recommendations
+
+### High Unused Buffers
+
+If you have many unused buffers:
+- Consider reducing `shared_buffers` to free memory for other uses
+- Or accept this as normal if workload doesn't require all allocated buffers
+
+### High Dirty Buffer Ratio
+
+If dirty buffers are consistently high (>20% of used buffers):
+- Increase `bgwriter_lru_maxpages` to write more buffers per round
+- Decrease `bgwriter_delay` to write more frequently
+- Adjust checkpoint parameters (`checkpoint_timeout`, `max_wal_size`)
+- Consider faster storage for better write throughput
+
+### Low Usage Count Average
+
+If average usage count is consistently low (less than 2):
+- Buffer cache may be too small for working set
+- Consider increasing `shared_buffers`
+- Query patterns may not benefit from caching (sequential scans)
+
+### High Pinned Buffers
+
+If pinned buffers are consistently high:
+- Investigate long-running queries
+- Check for connection leaks
+- Review transaction management
+
+## Performance Considerations
+
+The `pg_buffercache_summary()` function:
+- Does **not** take locks on the buffer pool
+- Is much faster than `pg_buffercache` (which returns per-buffer details)
+- Safe to call frequently in production
+- Returns a single row with aggregate statistics
+
+This makes it ideal for monitoring compared to the full `pg_buffercache` view.
+
+## Comparison with pg_buffercache
+
+| Feature | pg_buffercache_summary() | pg_buffercache view |
+|---------|-------------------------|---------------------|
+| PostgreSQL version | 16+ | 8.1+ |
+| Locks | No locks | No locks |
+| Output | Single summary row | One row per buffer |
+| Performance | Very fast | Can be slow (100k+ rows) |
+| Detail level | Aggregate statistics | Per-buffer details |
+| Best for | Monitoring, alerting | Deep analysis, debugging |
+
+## Alert Examples
+
+```yaml
+- alert: HighDirtyBuffers
+  expr: |
+    (pg_buffercache_summary_buffers_dirty / 
+     pg_buffercache_summary_buffers_used) > 0.25
+  for: 5m
+  annotations:
+    summary: "High ratio of dirty buffers in shared buffer cache"
+    description: "{{ $value | humanizePercentage }} of buffers are dirty"
+
+- alert: HighPinnedBuffers
+  expr: pg_buffercache_summary_buffers_pinned > 1000
+  for: 10m
+  annotations:
+    summary: "Unusually high number of pinned buffers"
+    description: "{{ $value }} buffers are currently pinned"
+
+- alert: LowBufferCacheEfficiency
+  expr: pg_buffercache_summary_usagecount_avg < 1.5
+  for: 15m
+  annotations:
+    summary: "Low buffer cache efficiency"
+    description: "Average usage count is {{ $value }}, indicating poor cache efficiency"
+```
+
+## Troubleshooting
+
+### Extension Not Available
+
+If the collector fails with extension errors:
+```sql
+-- Check if extension is installed
+SELECT * FROM pg_extension WHERE extname = 'pg_buffercache';
+
+-- Install if missing
+CREATE EXTENSION pg_buffercache;
+```
+
+### Function Not Found
+
+If you get "function pg_buffercache_summary() does not exist":
+- Verify PostgreSQL version is 16 or later
+- Check extension version: `SELECT extversion FROM pg_extension WHERE extname = 'pg_buffercache'`
+- Update extension if needed: `ALTER EXTENSION pg_buffercache UPDATE`
+
+### Permission Denied
+
+```sql
+-- Grant necessary permissions
+GRANT pg_monitor TO monitoring_user;
+-- OR
+GRANT EXECUTE ON FUNCTION pg_buffercache_summary() TO monitoring_user;
+```
+
+## Related
+
+- [pg_buffercache extension](https://www.postgresql.org/docs/current/pgbuffercache.html)
+- [Shared buffer configuration](https://www.postgresql.org/docs/current/runtime-config-resource.html#GUC-SHARED-BUFFERS)
+- [stat-bgwriter collector](/reference/collectors/stat-bgwriter) - Background writer statistics
+- [stat-checkpointer collector](/reference/collectors/stat-checkpointer) - Checkpointer statistics
