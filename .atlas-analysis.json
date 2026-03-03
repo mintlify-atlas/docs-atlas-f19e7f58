@@ -1,0 +1,139 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "PostgreSQL Server Exporter",
+  "projectDescription": "A Prometheus exporter for PostgreSQL server metrics and monitoring.",
+  "theme": "aspen",
+  "primaryColor": "#336791",
+  "lightColor": "#5294C1",
+  "darkColor": "#2D5672",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/data-source",
+              "configuration/auth-modules",
+              "configuration/environment-variables",
+              "configuration/flags"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/kubernetes",
+              "deployment/binary",
+              "deployment/systemd"
+            ]
+          },
+          {
+            "group": "Collectors",
+            "pages": [
+              "collectors/overview",
+              "collectors/database",
+              "collectors/replication",
+              "collectors/locks",
+              "collectors/stat-database",
+              "collectors/stat-user-tables",
+              "collectors/wal",
+              "collectors/custom-queries"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/multi-target",
+              "advanced/security",
+              "advanced/performance",
+              "advanced/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Collectors",
+            "pages": [
+              "reference/collectors/database",
+              "reference/collectors/database-wraparound",
+              "reference/collectors/locks",
+              "reference/collectors/long-running-transactions",
+              "reference/collectors/postmaster",
+              "reference/collectors/process-idle",
+              "reference/collectors/replication",
+              "reference/collectors/replication-slot",
+              "reference/collectors/stat-activity-autovacuum",
+              "reference/collectors/stat-bgwriter",
+              "reference/collectors/stat-checkpointer",
+              "reference/collectors/stat-database",
+              "reference/collectors/stat-progress-vacuum",
+              "reference/collectors/stat-statements",
+              "reference/collectors/stat-user-tables",
+              "reference/collectors/stat-wal-receiver",
+              "reference/collectors/statio-user-indexes",
+              "reference/collectors/statio-user-tables",
+              "reference/collectors/wal",
+              "reference/collectors/xlog-location"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "reference/configuration-file",
+              "reference/command-line-flags",
+              "reference/environment-variables"
+            ]
+          },
+          {
+            "group": "Metrics",
+            "pages": [
+              "reference/metrics/overview",
+              "reference/metrics/exporter-metrics"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Exports PostgreSQL metrics to Prometheus",
+    "20+ built-in collectors for comprehensive monitoring",
+    "Multi-target support for monitoring multiple PostgreSQL instances",
+    "Configurable authentication modules for secure connections",
+    "Docker and Kubernetes deployment ready",
+    "Support for PostgreSQL versions 13-18",
+    "Custom query support via YAML configuration",
+    "Non-superuser operation support"
+  ],
+  "publicApiSurface": [
+    "/metrics endpoint - Main metrics endpoint",
+    "/probe endpoint - Multi-target scraping endpoint",
+    "collector.database - Database metrics collector",
+    "collector.locks - Lock metrics collector",
+    "collector.replication - Replication metrics collector",
+    "collector.stat_database - Database statistics collector",
+    "collector.stat_user_tables - User table statistics collector",
+    "collector.wal - Write-Ahead Log metrics collector",
+    "collector.stat_statements - pg_stat_statements collector",
+    "collector.replication_slot - Replication slot metrics",
+    "auth_modules configuration - Authentication modules for multi-target",
+    "DATA_SOURCE_NAME - Primary connection string environment variable",
+    "--config.file flag - Configuration file path",
+    "--web.listen-address flag - HTTP server address",
+    "--disable-default-metrics flag - Disable built-in metrics"
+  ]
+}
