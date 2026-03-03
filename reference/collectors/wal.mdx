@@ -1,0 +1,230 @@
+---
+title: wal
+description: Reference documentation for the wal collector
+---
+
+The `wal` collector monitors Write-Ahead Log (WAL) directory statistics, tracking the number and size of WAL segment files.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### pg_wal_segments
+
+**Type:** Gauge  
+**Description:** Number of WAL segment files in the WAL directory
+
+**Labels:** None
+
+### pg_wal_size_bytes
+
+**Type:** Gauge  
+**Description:** Total size of all WAL segment files in bytes
+
+**Labels:** None
+
+## SQL Query
+
+```sql
+SELECT
+  COUNT(*) AS segments,
+  SUM(size) AS size
+FROM pg_ls_waldir()
+WHERE name ~ '^[0-9A-F]{24}$'
+```
+
+## How It Works
+
+The collector:
+1. Lists all files in the WAL directory using `pg_ls_waldir()`
+2. Filters for valid WAL segment files using pattern `^[0-9A-F]{24}$`
+3. Counts the segments and sums their sizes
+
+## WAL Segment Naming
+
+WAL segment files follow a specific naming pattern:
+- **Format:** `000000010000000000000001` (24 hexadecimal characters)
+- **Structure:** `timelineId` (8 chars) + `logFileId` (8 chars) + `segmentId` (8 chars)
+
+The regex filter ensures only valid WAL segments are counted, excluding:
+- Archive status files (`.ready`, `.done`)
+- Temporary files
+- Other metadata files
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 10+
+
+The `pg_ls_waldir()` function was introduced in PostgreSQL 10.
+
+**Pre-PostgreSQL 10:** WAL was called "xlog" - use the `xlog_location` collector instead.
+
+## Required Permissions
+
+The monitoring user needs:
+- Execute permission on `pg_ls_waldir()` function
+- Typically requires `pg_monitor` role or superuser:
+  ```sql
+  GRANT pg_monitor TO monitoring_user;
+  ```
+
+## Example Output
+
+```
+pg_wal_segments 15
+pg_wal_size_bytes 251658240
+```
+
+In this example:
+- 15 WAL segment files present
+- Total size: ~240 MB (15 segments × 16 MB each)
+
+## Use Cases
+
+### Monitor WAL Growth
+
+```promql
+# WAL growth rate
+rate(pg_wal_size_bytes[5m])
+
+# Segment creation rate
+rate(pg_wal_segments[5m])
+```
+
+### Detect WAL Buildup
+
+```promql
+# Too many WAL segments
+pg_wal_segments > 100
+
+# WAL directory too large
+pg_wal_size_bytes > 10737418240  # > 10GB
+```
+
+### Estimate Write Load
+
+Since each segment is typically 16MB:
+```promql
+# Approximate WAL generation rate (MB/s)
+rate(pg_wal_segments[5m]) * 16
+```
+
+## Normal WAL Retention
+
+Typical WAL retention is controlled by:
+
+- `min_wal_size` (default: 80MB = ~5 segments)
+- `max_wal_size` (default: 1GB = ~64 segments)
+- Replication slots (can retain WAL indefinitely)
+- Archive mode settings
+
+## Alert Examples
+
+```yaml
+- alert: HighWALSegmentCount
+  expr: pg_wal_segments > 100
+  for: 10m
+  annotations:
+    summary: "High number of WAL segments"
+    description: "{{ $labels.instance }} has {{ $value }} WAL segments (normal: <64)"
+
+- alert: WALDirectoryLarge
+  expr: pg_wal_size_bytes > 5368709120  # 5GB
+  for: 5m
+  annotations:
+    summary: "WAL directory is large"
+    description: "WAL directory size: {{ $value | humanize }}B"
+
+- alert: WALGrowthHigh
+  expr: rate(pg_wal_size_bytes[5m]) > 10485760  # >10MB/s
+  for: 10m
+  annotations:
+    summary: "High WAL generation rate"
+    description: "WAL growing at {{ $value | humanize }}B/s"
+```
+
+## Troubleshooting
+
+### Excessive WAL Segments
+
+If `pg_wal_segments` is unusually high:
+
+1. **Check replication slots:**
+   ```sql
+   SELECT slot_name, active, 
+          pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) as retained_bytes
+   FROM pg_replication_slots;
+   ```
+
+2. **Check archive status:**
+   ```sql
+   SELECT archived_count, failed_count
+   FROM pg_stat_archiver;
+   ```
+
+3. **Verify configuration:**
+   ```sql
+   SHOW max_wal_size;
+   SHOW min_wal_size;
+   SHOW wal_keep_size;  -- PostgreSQL 13+
+   ```
+
+4. **Check for inactive replication slots:**
+   ```sql
+   SELECT * FROM pg_replication_slots WHERE active = false;
+   ```
+
+### WAL Not Being Removed
+
+Common causes:
+- Inactive replication slot holding WAL
+- Archive command failing
+- `wal_keep_size` / `wal_keep_segments` set too high
+- Long-running transaction
+
+### Permission Errors
+
+If the collector fails with permission errors:
+```sql
+-- Grant pg_monitor role (PostgreSQL 10+)
+GRANT pg_monitor TO monitoring_user;
+
+-- Or grant specific function access
+GRANT EXECUTE ON FUNCTION pg_ls_waldir() TO monitoring_user;
+```
+
+## WAL Segment Size
+
+Default segment size is 16MB, but can be configured at compile time:
+```sql
+SELECT setting::bigint AS wal_segment_size_bytes
+FROM pg_settings 
+WHERE name = 'wal_segment_size';
+```
+
+Calculate approximate segment size:
+```promql
+pg_wal_size_bytes / pg_wal_segments
+```
+
+## Related Metrics
+
+Combine with other collectors for complete WAL monitoring:
+
+```promql
+# WAL generation rate vs checkpoint frequency
+rate(pg_wal_size_bytes[5m]) / 
+rate(pg_stat_bgwriter_checkpoints_timed_total[5m])
+
+# WAL retention by replication slots
+pg_replication_slot_safe_wal_size_bytes
+```
+
+## Related
+
+- [pg_ls_waldir]() function](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-GENFILE)
+- [WAL configuration](https://www.postgresql.org/docs/current/wal-configuration.html)
+- [replication-slot collector](/reference/collectors/replication-slot)
+- [xlog-location collector](/reference/collectors/xlog-location) (PostgreSQL less than  10)

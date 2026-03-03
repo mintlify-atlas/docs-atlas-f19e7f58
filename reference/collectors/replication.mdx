@@ -1,0 +1,143 @@
+---
+title: replication
+description: Reference documentation for the replication collector
+---
+
+The `replication` collector monitors PostgreSQL replication status, tracking replication lag and replica state.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### pg_replication_lag_seconds
+
+**Type:** Gauge  
+**Description:** Replication lag behind master in seconds
+
+**Labels:** None
+
+**Values:**
+- `0` - No lag (primary server or replica fully caught up)
+- `>0` - Seconds behind the primary
+
+### pg_replication_is_replica
+
+**Type:** Gauge  
+**Description:** Indicates if the server is a replica
+
+**Labels:** None
+
+**Values:**
+- `1` - Server is a replica (in recovery mode)
+- `0` - Server is a primary
+
+### pg_replication_last_replay_seconds
+
+**Type:** Gauge  
+**Description:** Age of last WAL replay in seconds
+
+**Labels:** None
+
+## SQL Query
+
+```sql
+SELECT
+  CASE
+    WHEN NOT pg_is_in_recovery() THEN 0
+    WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0
+    ELSE GREATEST(0, EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())))
+  END AS lag,
+  CASE
+    WHEN pg_is_in_recovery() THEN 1
+    ELSE 0
+  END as is_replica,
+  GREATEST(0, EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))) as last_replay
+```
+
+## How Lag is Calculated
+
+1. **Primary server:** Returns 0 (not in recovery)
+2. **Replica fully caught up:** Returns 0 when `receive_lsn` = `replay_lsn`
+3. **Replica with lag:** Returns time since last transaction replay
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 9.1+
+
+**Function Name Changes:**
+- PostgreSQL 10+: Uses `pg_last_wal_*` functions
+- PostgreSQL 9.x: Uses `pg_last_xlog_*` functions (renamed in v10)
+
+## Required Permissions
+
+The monitoring user needs:
+- Execute permission on replication functions (granted to `PUBLIC` by default)
+
+## Example Output
+
+**On Primary:**
+```
+pg_replication_lag_seconds 0
+pg_replication_is_replica 0
+pg_replication_last_replay_seconds 0
+```
+
+**On Replica:**
+```
+pg_replication_lag_seconds 2.45
+pg_replication_is_replica 1
+pg_replication_last_replay_seconds 2.45
+```
+
+## Use Cases
+
+### Monitoring Replication Health
+
+```promql
+# Alert on high replication lag
+pg_replication_lag_seconds > 30
+
+# Alert on replication stopped
+pg_replication_is_replica == 1 and pg_replication_lag_seconds > 300
+```
+
+### Detecting Replication Issues
+
+High lag can indicate:
+- Network issues between primary and replica
+- High write load on primary
+- Slow storage on replica
+- Long-running queries on replica blocking replay
+- Replication slot not being consumed
+
+## Troubleshooting
+
+### Check Replication Status
+
+**On Primary:**
+```sql
+SELECT * FROM pg_stat_replication;
+```
+
+**On Replica:**
+```sql
+SELECT 
+  pg_is_in_recovery() as is_replica,
+  pg_last_wal_receive_lsn() as receive_lsn,
+  pg_last_wal_replay_lsn() as replay_lsn,
+  pg_last_xact_replay_timestamp() as last_replay;
+```
+
+### Common Issues
+
+1. **Replication slot full:** Check `pg_replication_slots`
+2. **Network latency:** Use `wal_sender_timeout` and `wal_receiver_timeout`
+3. **Conflicts:** Check `pg_stat_database_conflicts`
+
+## Related
+
+- [pg_stat_replication view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-REPLICATION-VIEW)
+- [Replication functions](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-RECOVERY-INFO)
+- [Replication documentation](https://www.postgresql.org/docs/current/warm-standby.html)

@@ -1,0 +1,403 @@
+---
+title: Authentication Modules
+description: Configure auth modules for multi-target PostgreSQL monitoring
+---
+
+Authentication modules enable secure multi-target monitoring by pre-configuring credentials that can be referenced when probing different PostgreSQL instances.
+
+<Warning>
+Multi-target support is currently in **BETA** and may require changes in future releases. Feedback is welcome.
+</Warning>
+
+## Overview
+
+Auth modules solve the problem of managing credentials when monitoring multiple PostgreSQL instances. Instead of passing credentials in URLs (which can expose them in logs), you define them once in a configuration file and reference them by name.
+
+### Use Cases
+
+- **SaaS-managed PostgreSQL**: Monitor multiple managed database instances where sidecar deployment isn't possible
+- **Multi-tenant architectures**: Single exporter monitoring databases across multiple tenants
+- **Centralized monitoring**: One exporter instance scraping multiple PostgreSQL servers
+
+## Configuration File
+
+Auth modules are defined in the YAML configuration file specified by `--config.file` (default: `postgres_exporter.yml`).
+
+### Basic Structure
+
+```yaml
+auth_modules:
+  module_name:
+    type: userpass
+    userpass:
+      username: <username>
+      password: <password>
+    options:
+      key: value
+```
+
+## Auth Module Schema
+
+<ParamField path="auth_modules" type="object">
+  Map of authentication module definitions, keyed by module name
+</ParamField>
+
+<ParamField path="auth_modules.<module_name>" type="object">
+  Individual auth module configuration
+</ParamField>
+
+<ParamField path="auth_modules.<module_name>.type" type="string" required>
+  Authentication type. Currently only `userpass` is supported.
+</ParamField>
+
+<ParamField path="auth_modules.<module_name>.userpass" type="object">
+  Username and password credentials (required when type is `userpass`)
+</ParamField>
+
+<ParamField path="auth_modules.<module_name>.userpass.username" type="string" required>
+  Database username for authentication
+</ParamField>
+
+<ParamField path="auth_modules.<module_name>.userpass.password" type="string" required>
+  Database password for authentication
+</ParamField>
+
+<ParamField path="auth_modules.<module_name>.options" type="object">
+  Additional connection parameters to include in the DSN as key=value query parameters
+</ParamField>
+
+## Configuration Examples
+
+### Single Auth Module
+
+```yaml postgres_exporter.yml
+auth_modules:
+  production:
+    type: userpass
+    userpass:
+      username: postgres_exporter
+      password: secure_prod_password
+    options:
+      sslmode: require
+      connect_timeout: "10"
+```
+
+### Multiple Environments
+
+```yaml postgres_exporter.yml
+auth_modules:
+  prod_db:
+    type: userpass
+    userpass:
+      username: prod_monitor
+      password: prod_secret
+    options:
+      sslmode: verify-full
+      sslrootcert: /etc/ssl/certs/prod-ca.crt
+  
+  staging_db:
+    type: userpass
+    userpass:
+      username: staging_monitor
+      password: staging_secret
+    options:
+      sslmode: require
+  
+  dev_db:
+    type: userpass
+    userpass:
+      username: dev_monitor
+      password: dev_secret
+    options:
+      sslmode: disable
+```
+
+### With Custom Options
+
+```yaml postgres_exporter.yml
+auth_modules:
+  analytics_db:
+    type: userpass
+    userpass:
+      username: analytics_reader
+      password: analytics_pass
+    options:
+      sslmode: require
+      connect_timeout: "15"
+      application_name: postgres_exporter_analytics
+      statement_timeout: "30000"
+```
+
+## Using Auth Modules
+
+Auth modules are used with the `/probe` endpoint for multi-target monitoring.
+
+### Multi-Target Endpoint
+
+The exporter provides a `/probe` endpoint that accepts target and auth_module parameters:
+
+```bash
+curl "http://localhost:9187/probe?target=postgres1.example.com:5432/mydb&auth_module=prod_db"
+```
+
+<ParamField query="target" type="string" required>
+  PostgreSQL instance to probe. Can be a hostname, hostname:port, or full DSN.
+</ParamField>
+
+<ParamField query="auth_module" type="string" required>
+  Name of the auth module to use for credentials
+</ParamField>
+
+### How It Works
+
+When you request `/probe?target=dbhost:5432&auth_module=prod_db`:
+
+<Steps>
+  <Step title="Parse Target">
+    The exporter parses the target parameter into a DSN structure
+  </Step>
+  <Step title="Apply Auth Module">
+    Credentials from the `prod_db` auth module are applied to the DSN
+  </Step>
+  <Step title="Merge Options">
+    Connection options from the auth module are added as query parameters
+  </Step>
+  <Step title="Connect and Scrape">
+    The exporter connects to PostgreSQL and returns metrics
+  </Step>
+</Steps>
+
+## Prometheus Configuration
+
+Integrate multi-target monitoring with Prometheus using relabel configs:
+
+```yaml
+scrape_configs:
+  - job_name: 'postgres_multi_target'
+    static_configs:
+      - targets:
+        - db1.example.com:5432
+        - db2.example.com:5432
+        - db3.example.com:5432
+    metrics_path: /probe
+    params:
+      auth_module: [prod_db]
+    relabel_configs:
+      # Pass the target as a URL parameter
+      - source_labels: [__address__]
+        target_label: __param_target
+      # Use the target as the instance label
+      - source_labels: [__param_target]
+        target_label: instance
+      # Point to the exporter's actual address
+      - target_label: __address__
+        replacement: postgres-exporter.monitoring.svc:9187
+```
+
+### Multiple Auth Modules
+
+Monitor different groups of databases with different credentials:
+
+```yaml
+scrape_configs:
+  # Production databases
+  - job_name: 'postgres_production'
+    static_configs:
+      - targets:
+        - prod-db1.example.com:5432
+        - prod-db2.example.com:5432
+    metrics_path: /probe
+    params:
+      auth_module: [prod_db]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: postgres-exporter:9187
+  
+  # Staging databases
+  - job_name: 'postgres_staging'
+    static_configs:
+      - targets:
+        - staging-db1.example.com:5432
+        - staging-db2.example.com:5432
+    metrics_path: /probe
+    params:
+      auth_module: [staging_db]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: postgres-exporter:9187
+```
+
+## Security Best Practices
+
+<Warning>
+The configuration file contains sensitive credentials. Protect it appropriately.
+</Warning>
+
+### File Permissions
+
+```bash
+# Restrict read access to the config file
+chmod 600 postgres_exporter.yml
+chown postgres_exporter:postgres_exporter postgres_exporter.yml
+```
+
+### Using Secrets Management
+
+Integrate with secrets management systems:
+
+<Tabs>
+  <Tab title="Kubernetes">
+    ```yaml
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: postgres-exporter-config
+    type: Opaque
+    stringData:
+      postgres_exporter.yml: |
+        auth_modules:
+          prod_db:
+            type: userpass
+            userpass:
+              username: monitor_user
+              password: ${DB_PASSWORD}
+            options:
+              sslmode: require
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    spec:
+      template:
+        spec:
+          containers:
+          - name: postgres-exporter
+            image: quay.io/prometheuscommunity/postgres-exporter
+            args:
+            - --config.file=/config/postgres_exporter.yml
+            volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          volumes:
+          - name: config
+            secret:
+              secretName: postgres-exporter-config
+              defaultMode: 0400
+    ```
+  </Tab>
+  <Tab title="Docker">
+    ```bash
+    # Create config file
+    cat > /secure/location/config.yml <<EOF
+    auth_modules:
+      prod_db:
+        type: userpass
+        userpass:
+          username: monitor_user
+          password: secure_password
+        options:
+          sslmode: require
+    EOF
+    
+    chmod 600 /secure/location/config.yml
+    
+    # Run with mounted config
+    docker run \
+      -v /secure/location/config.yml:/config/postgres_exporter.yml:ro \
+      -p 9187:9187 \
+      quay.io/prometheuscommunity/postgres-exporter \
+      --config.file=/config/postgres_exporter.yml
+    ```
+  </Tab>
+</Tabs>
+
+### Avoid Logging Credentials
+
+The exporter redacts passwords from logs. When you see:
+
+```
+level=info msg="Configured auth module" module=prod_db dsn="postgresql://user:******@dbhost:5432/mydb?sslmode=require"
+```
+
+This is expected and secure.
+
+## Reloading Configuration
+
+Currently, the exporter requires a restart to reload the configuration file. Send a `SIGTERM` or `SIGINT` to gracefully stop the process:
+
+```bash
+# Find the process
+pgrep postgres_exporter
+
+# Send termination signal
+kill -TERM <pid>
+
+# Restart with new config
+./postgres_exporter --config.file=postgres_exporter.yml
+```
+
+<Note>
+Future versions may support dynamic configuration reloading via signals or HTTP endpoints.
+</Note>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Config file not found">
+    ```
+    level=warn msg="Error loading config" err="error opening config file \"postgres_exporter.yml\": no such file or directory"
+    ```
+    
+    **Solution**: Specify the full path with `--config.file=/path/to/config.yml`
+  </Accordion>
+  
+  <Accordion title="Invalid YAML syntax">
+    ```
+    level=error msg="Error loading config" err="error parsing config file: yaml: line 5: did not find expected key"
+    ```
+    
+    **Solution**: Validate YAML syntax. Check indentation (use spaces, not tabs) and ensure all keys are properly formatted.
+  </Accordion>
+  
+  <Accordion title="Auth module not found">
+    When using `/probe?auth_module=nonexistent`, you'll receive an error response.
+    
+    **Solution**: Verify the module name matches exactly what's defined in the config file (case-sensitive).
+  </Accordion>
+  
+  <Accordion title="Connection fails with auth module">
+    The module credentials may be incorrect or the user lacks necessary permissions.
+    
+    **Solution**: Test the credentials directly with `psql`:
+    ```bash
+    psql "postgresql://username:password@target:5432/database?sslmode=require"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Limitations
+
+<Warning>
+- Only the `userpass` authentication type is currently supported
+- Certificate-based authentication is not yet available via auth modules
+- Configuration changes require a process restart
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Multi-Target Pattern" icon="crosshairs" href="https://prometheus.io/docs/guides/multi-target-exporter/" external>
+    Learn more about the Prometheus multi-target exporter pattern
+  </Card>
+  <Card title="Environment Variables" icon="list" href="/configuration/environment-variables">
+    Explore other configuration options
+  </Card>
+</CardGroup>

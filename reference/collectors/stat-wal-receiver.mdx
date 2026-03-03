@@ -1,0 +1,246 @@
+---
+title: stat-wal-receiver
+description: Reference documentation for the stat-wal-receiver collector
+---
+
+The `stat_wal_receiver` collector monitors WAL (Write-Ahead Log) receiver statistics on standby servers.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.stat-wal-receiver`
+
+<Note>
+This collector only returns data on **standby/replica servers**. It will have no output on primary servers.
+</Note>
+
+## Metrics
+
+### pg_stat_wal_receiver_receive_start_lsn
+
+**Type:** Counter  
+**Description:** First write-ahead log location used when WAL receiver is started (as decimal)
+
+**Labels:**
+- `upstream_host` - Host name of the upstream server
+- `slot_name` - Replication slot name
+- `status` - WAL receiver status
+
+### pg_stat_wal_receiver_receive_start_tli
+
+**Type:** Gauge  
+**Description:** First timeline number used when WAL receiver is started
+
+**Labels:** `upstream_host`, `slot_name`, `status`
+
+### pg_stat_wal_receiver_flushed_lsn
+
+**Type:** Counter  
+**Description:** Last write-ahead log location already received and flushed to disk (as decimal)
+
+**Labels:** `upstream_host`, `slot_name`, `status`
+
+**Availability:** PostgreSQL 9.6+
+
+### pg_stat_wal_receiver_received_tli
+
+**Type:** Gauge  
+**Description:** Timeline number of last write-ahead log location received and flushed to disk
+
+**Labels:** `upstream_host`, `slot_name`, `status`
+
+### pg_stat_wal_receiver_last_msg_send_time
+
+**Type:** Counter  
+**Description:** Send time of last message received from origin WAL sender (Unix timestamp)
+
+**Labels:** `upstream_host`, `slot_name`, `status`
+
+### pg_stat_wal_receiver_last_msg_receipt_time
+
+**Type:** Counter  
+**Description:** Receipt time of last message received from origin WAL sender (Unix timestamp)
+
+**Labels:** `upstream_host`, `slot_name`, `status`
+
+### pg_stat_wal_receiver_latest_end_lsn
+
+**Type:** Counter  
+**Description:** Last write-ahead log location reported to origin WAL sender (as decimal)
+
+**Labels:** `upstream_host`, `slot_name`, `status`
+
+### pg_stat_wal_receiver_latest_end_time
+
+**Type:** Counter  
+**Description:** Time of last write-ahead log location reported to origin WAL sender (Unix timestamp)
+
+**Labels:** `upstream_host`, `slot_name`, `status`
+
+### pg_stat_wal_receiver_upstream_node
+
+**Type:** Gauge  
+**Description:** Node ID of the upstream node (extracted from slot name pattern `repmgr_slot_N`)
+
+**Labels:** `upstream_host`, `slot_name`, `status`
+
+## SQL Queries
+
+**Check for flushed_lsn column:**
+```sql
+SELECT column_name
+FROM information_schema.columns
+WHERE table_name = 'pg_stat_wal_receiver' 
+AND column_name = 'flushed_lsn'
+```
+
+**Main query (with flushed_lsn):**
+```sql
+SELECT
+  trim(both '''' from substring(conninfo from 'host=([^ ]*)')) as upstream_host,
+  slot_name,
+  status,
+  (receive_start_lsn - '0/0') % (2^52)::bigint as receive_start_lsn,
+  (flushed_lsn - '0/0') % (2^52)::bigint as flushed_lsn,
+  receive_start_tli,
+  received_tli,
+  extract(epoch from last_msg_send_time) as last_msg_send_time,
+  extract(epoch from last_msg_receipt_time) as last_msg_receipt_time,
+  (latest_end_lsn - '0/0') % (2^52)::bigint as latest_end_lsn,
+  extract(epoch from latest_end_time) as latest_end_time,
+  substring(slot_name from 'repmgr_slot_([0-9]*)') as upstream_node
+FROM pg_catalog.pg_stat_wal_receiver
+```
+
+**Without flushed_lsn (older versions):**
+```sql
+-- Same query but without flushed_lsn column
+```
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 9.6+
+
+**Version-specific features:**
+- **PostgreSQL 9.6+:** `flushed_lsn` column added
+- **PostgreSQL 10+:** Function names changed from `pg_*_xlog_*` to `pg_*_wal_*`
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_catalog.pg_stat_wal_receiver` view
+
+## Example Output
+
+```
+pg_stat_wal_receiver_receive_start_lsn{upstream_host="primary.example.com",slot_name="replica_1",status="streaming"} 123456789
+pg_stat_wal_receiver_flushed_lsn{upstream_host="primary.example.com",slot_name="replica_1",status="streaming"} 123456750
+pg_stat_wal_receiver_receive_start_tli{upstream_host="primary.example.com",slot_name="replica_1",status="streaming"} 1
+pg_stat_wal_receiver_received_tli{upstream_host="primary.example.com",slot_name="replica_1",status="streaming"} 1
+pg_stat_wal_receiver_last_msg_send_time{upstream_host="primary.example.com",slot_name="replica_1",status="streaming"} 1638360125
+pg_stat_wal_receiver_last_msg_receipt_time{upstream_host="primary.example.com",slot_name="replica_1",status="streaming"} 1638360125
+```
+
+## Use Cases
+
+### Monitor Replication Lag
+
+```promql
+# WAL receive lag (LSN difference)
+pg_stat_wal_receiver_receive_start_lsn - pg_stat_wal_receiver_flushed_lsn
+
+# Time since last message received
+time() - pg_stat_wal_receiver_last_msg_receipt_time
+```
+
+### Detect Replication Issues
+
+```promql
+# Receiver not streaming
+pg_stat_wal_receiver_receive_start_lsn{status!="streaming"}
+
+# No recent messages
+time() - pg_stat_wal_receiver_last_msg_receipt_time > 60
+```
+
+### Network Latency
+
+```promql
+# Message delivery time
+pg_stat_wal_receiver_last_msg_receipt_time - pg_stat_wal_receiver_last_msg_send_time
+```
+
+## Status Values
+
+- `streaming` - Actively receiving WAL from primary
+- `stopped` - WAL receiver stopped
+- `starting` - WAL receiver starting up
+- `waiting` - Waiting to connect to primary
+- `restarting` - Restarting after connection loss
+
+## Alert Examples
+
+```yaml
+- alert: WALReceiverDown
+  expr: pg_stat_wal_receiver_receive_start_lsn{status!="streaming"} > 0
+  annotations:
+    summary: "WAL receiver not streaming"
+    description: "Replica {{ $labels.instance }} WAL receiver status: {{ $labels.status }}"
+
+- alert: WALReceiverStale
+  expr: time() - pg_stat_wal_receiver_last_msg_receipt_time > 60
+  annotations:
+    summary: "No WAL received in 60 seconds"
+    description: "Replica {{ $labels.instance }} hasn't received WAL for {{ $value }}s"
+
+- alert: HighReplicationLatency
+  expr: |
+    pg_stat_wal_receiver_last_msg_receipt_time - 
+    pg_stat_wal_receiver_last_msg_send_time > 5
+  annotations:
+    summary: "High network latency in replication"
+    description: "Network latency: {{ $value }}s"
+```
+
+## Troubleshooting
+
+### Check WAL Receiver Status
+
+```sql
+SELECT 
+  status,
+  conninfo,
+  slot_name,
+  sender_host,
+  sender_port,
+  received_lsn,
+  received_tli,
+  last_msg_send_time,
+  last_msg_receipt_time,
+  latest_end_lsn,
+  latest_end_time
+FROM pg_stat_wal_receiver;
+```
+
+### Common Issues
+
+1. **Status: stopped**
+   - Check replication configuration
+   - Verify network connectivity to primary
+   - Check `primary_conninfo` in `recovery.conf`/`postgresql.auto.conf`
+
+2. **No data returned**
+   - Collector only works on standby servers
+   - Check `SELECT pg_is_in_recovery();` returns `true`
+
+3. **High message latency**
+   - Network issues between primary and replica
+   - High load on primary
+   - Check `wal_sender_timeout` and `wal_receiver_timeout`
+
+## Related
+
+- [pg_stat_wal_receiver view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-WAL-RECEIVER-VIEW)
+- [Streaming replication](https://www.postgresql.org/docs/current/warm-standby.html#STREAMING-REPLICATION)
+- [replication collector](/reference/collectors/replication)

@@ -1,0 +1,412 @@
+---
+title: Exporter Metrics
+description: Metrics exposed by the PostgreSQL Server Exporter about itself
+---
+
+## Overview
+
+In addition to PostgreSQL database metrics, the exporter exposes metrics about its own operation. These metrics help monitor the health and performance of the exporter itself.
+
+All exporter self-monitoring metrics use the following prefixes:
+- `pg_exporter_*` - Exporter-specific metrics
+- `pg_scrape_*` - Per-collector scrape metrics
+- `postgres_exporter_*` - Configuration reload metrics
+
+## Connection Status Metrics
+
+### pg_up
+
+**Type:** Gauge
+
+**Labels:** None (can have constant labels if configured)
+
+**Description:** Indicates whether the last scrape was able to connect to the PostgreSQL server.
+
+**Values:**
+- `1` - Successfully connected to PostgreSQL
+- `0` - Failed to connect to PostgreSQL
+
+**Use cases:**
+- Primary health check for PostgreSQL connectivity
+- Alerting on database unavailability
+- Uptime monitoring
+
+**Example PromQL:**
+```promql
+# Alert when PostgreSQL is down
+pg_up == 0
+
+# PostgreSQL uptime percentage (over 1 hour)
+avg_over_time(pg_up[1h]) * 100
+
+# Count of PostgreSQL instances down
+count(pg_up == 0)
+```
+
+**Alert example:**
+```yaml
+- alert: PostgreSQLDown
+  expr: pg_up == 0
+  for: 1m
+  labels:
+    severity: critical
+  annotations:
+    summary: "PostgreSQL instance {{ $labels.instance }} is down"
+    description: "PostgreSQL has been unreachable for more than 1 minute"
+```
+
+---
+
+## Scrape Performance Metrics
+
+### pg_exporter_last_scrape_duration_seconds
+
+**Type:** Gauge
+
+**Labels:** None (can have constant labels if configured)
+
+**Description:** Duration of the last scrape of metrics from PostgreSQL in seconds.
+
+**Use cases:**
+- Monitoring exporter performance
+- Identifying slow metric collection
+- Capacity planning
+
+**Example PromQL:**
+```promql
+# Alert on slow scrapes
+pg_exporter_last_scrape_duration_seconds > 10
+
+# Average scrape duration over time
+avg_over_time(pg_exporter_last_scrape_duration_seconds[5m])
+
+# Scrape duration trend
+deriv(pg_exporter_last_scrape_duration_seconds[1h])
+```
+
+---
+
+### pg_exporter_scrapes_total
+
+**Type:** Counter
+
+**Labels:** None (can have constant labels if configured)
+
+**Description:** Total number of times PostgreSQL was scraped for metrics.
+
+**Use cases:**
+- Monitoring scrape frequency
+- Calculating error rates
+- Verifying exporter is running
+
+**Example PromQL:**
+```promql
+# Scrape rate per minute
+rate(pg_exporter_scrapes_total[1m])
+
+# Total scrapes in the last hour
+increase(pg_exporter_scrapes_total[1h])
+```
+
+---
+
+### pg_exporter_last_scrape_error
+
+**Type:** Gauge
+
+**Labels:** None (can have constant labels if configured)
+
+**Description:** Whether the last scrape of metrics from PostgreSQL resulted in an error.
+
+**Values:**
+- `1` - Last scrape encountered an error
+- `0` - Last scrape was successful
+
+**Use cases:**
+- Detecting metric collection failures
+- Alerting on persistent errors
+- Debugging exporter issues
+
+**Example PromQL:**
+```promql
+# Alert on scrape errors
+pg_exporter_last_scrape_error == 1
+
+# Error rate (percentage of failed scrapes)
+rate(pg_exporter_last_scrape_error[5m]) * 100
+
+# Has been failing for more than 5 minutes
+pg_exporter_last_scrape_error == 1 and 
+  pg_exporter_last_scrape_error offset 5m == 1
+```
+
+**Alert example:**
+```yaml
+- alert: PostgreSQLExporterScrapeFailing
+  expr: pg_exporter_last_scrape_error == 1
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "PostgreSQL exporter scrape failing for {{ $labels.instance }}"
+    description: "The exporter has been unable to scrape metrics for more than 5 minutes"
+```
+
+---
+
+## Per-Collector Metrics
+
+These metrics are exposed for each enabled collector, allowing fine-grained monitoring of individual collector performance.
+
+### pg_scrape_collector_duration_seconds
+
+**Type:** Gauge
+
+**Labels:**
+- `collector` - Name of the collector (e.g., "database", "stat_database", "locks")
+
+**Description:** Duration of a collector scrape in seconds.
+
+**Use cases:**
+- Identifying slow collectors
+- Optimizing collector performance
+- Troubleshooting specific collectors
+
+**Example PromQL:**
+```promql
+# Slowest collectors
+topk(5, pg_scrape_collector_duration_seconds)
+
+# Collectors taking longer than 1 second
+pg_scrape_collector_duration_seconds > 1
+
+# Average duration per collector
+avg by (collector) (pg_scrape_collector_duration_seconds)
+
+# Alert on slow stat_statements collector
+pg_scrape_collector_duration_seconds{collector="stat_statements"} > 5
+```
+
+**Common collector durations:**
+- Fast collectors (&lt;0.1s): `database`, `replication`, `postmaster`
+- Medium collectors (0.1 to 1s): `stat_database`, `stat_bgwriter`, `locks`
+- Slow collectors (&gt;1s): `stat_user_tables`, `stat_statements` (especially on busy systems)
+
+---
+
+### pg_scrape_collector_success
+
+**Type:** Gauge
+
+**Labels:**
+- `collector` - Name of the collector
+
+**Description:** Whether a collector succeeded in its scrape.
+
+**Values:**
+- `1` - Collector succeeded
+- `0` - Collector failed
+
+**Use cases:**
+- Detecting collector-specific failures
+- Monitoring collector health
+- Identifying permission or compatibility issues
+
+**Example PromQL:**
+```promql
+# Failed collectors
+pg_scrape_collector_success == 0
+
+# Collectors with intermittent failures
+rate(pg_scrape_collector_success[5m]) < 1 and 
+rate(pg_scrape_collector_success[5m]) > 0
+
+# Count of failing collectors
+count(pg_scrape_collector_success == 0) by (instance)
+```
+
+**Alert example:**
+```yaml
+- alert: PostgreSQLCollectorFailing
+  expr: pg_scrape_collector_success == 0
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "PostgreSQL collector {{ $labels.collector }} failing on {{ $labels.instance }}"
+    description: "The {{ $labels.collector }} collector has been failing for more than 5 minutes. Check permissions and configuration."
+```
+
+**Common failure reasons:**
+- **Permission errors:** Collector queries require specific PostgreSQL privileges
+- **Version incompatibility:** Collector not supported on current PostgreSQL version
+- **Extension missing:** Collector requires an extension that isn't installed (e.g., `pg_stat_statements`)
+- **Configuration error:** Invalid collector-specific configuration
+
+---
+
+## Configuration Reload Metrics
+
+These metrics track the status of configuration file reloads.
+
+### postgres_exporter_config_last_reload_successful
+
+**Type:** Gauge
+
+**Labels:** None
+
+**Description:** Whether the last configuration reload was successful.
+
+**Values:**
+- `1` - Configuration loaded successfully
+- `0` - Configuration load failed
+
+**Use cases:**
+- Detecting configuration errors
+- Verifying configuration changes
+- Alerting on misconfigurations
+
+**Example PromQL:**
+```promql
+# Alert on config load failure
+postgres_exporter_config_last_reload_successful == 0
+
+# Config has been invalid for more than 1 hour
+postgres_exporter_config_last_reload_successful == 0 and 
+  time() - postgres_exporter_config_last_reload_success_timestamp_seconds > 3600
+```
+
+---
+
+### postgres_exporter_config_last_reload_success_timestamp_seconds
+
+**Type:** Gauge
+
+**Labels:** None
+
+**Description:** Timestamp of the last successful configuration reload (Unix time).
+
+**Use cases:**
+- Tracking when configuration was last changed
+- Correlating configuration changes with issues
+- Verifying configuration updates
+
+**Example PromQL:**
+```promql
+# Time since last successful config reload (in hours)
+(time() - postgres_exporter_config_last_reload_success_timestamp_seconds) / 3600
+
+# Alert if config hasn't reloaded in 24 hours (if expected)
+time() - postgres_exporter_config_last_reload_success_timestamp_seconds > 86400
+
+# Config reload happened recently (within 5 minutes)
+time() - postgres_exporter_config_last_reload_success_timestamp_seconds < 300
+```
+
+---
+
+## User Queries Metrics
+
+When custom user queries are configured via `--extend.query-path` (deprecated feature):
+
+### pg_exporter_user_queries_load_error
+
+**Type:** Gauge
+
+**Labels:**
+- `filename` - Path to the user queries file
+- `hashsum` - SHA256 hash of the file contents
+
+**Description:** Whether the user queries file was loaded and parsed successfully.
+
+**Values:**
+- `1` - User queries file failed to load or parse
+- `0` - User queries file loaded successfully
+
+**Use cases:**
+- Detecting errors in custom query files
+- Verifying custom query deployments
+- Troubleshooting custom metrics
+
+**Example PromQL:**
+```promql
+# Alert on user queries load error
+pg_exporter_user_queries_load_error == 1
+
+# Check which file failed
+pg_exporter_user_queries_load_error{filename=~".+"} == 1
+```
+
+---
+
+## Monitoring Best Practices
+
+### Essential Alerts
+
+Every PostgreSQL exporter deployment should monitor:
+
+1. **Database connectivity:**
+   ```promql
+   pg_up == 0
+   ```
+
+2. **Exporter health:**
+   ```promql
+   pg_exporter_last_scrape_error == 1
+   ```
+
+3. **Collector failures:**
+   ```promql
+   pg_scrape_collector_success == 0
+   ```
+
+4. **Slow scrapes:**
+   ```promql
+   pg_exporter_last_scrape_duration_seconds > 10
+   ```
+
+### Grafana Dashboard
+
+Recommended panels for an exporter health dashboard:
+
+- **Connection status:** `pg_up` (stat panel)
+- **Scrape duration:** Graph of `pg_exporter_last_scrape_duration_seconds`
+- **Error rate:** Graph of `rate(pg_exporter_last_scrape_error[5m])`
+- **Collector performance:** Table showing `pg_scrape_collector_duration_seconds` by collector
+- **Collector health:** Heatmap of `pg_scrape_collector_success` by collector over time
+
+### Debugging Exporter Issues
+
+When `pg_scrape_collector_success == 0` for a collector:
+
+1. **Check exporter logs** for detailed error messages
+2. **Verify PostgreSQL permissions:**
+   ```sql
+   -- Check if monitoring user has required permissions
+   SELECT * FROM pg_roles WHERE rolname = 'postgres_exporter';
+   ```
+3. **Test collector queries manually** using psql
+4. **Verify PostgreSQL version compatibility** for the collector
+5. **Check if required extensions are installed:**
+   ```sql
+   SELECT * FROM pg_extension;
+   ```
+
+---
+
+## Metric Retention and Cardinality
+
+Exporter self-metrics have low cardinality:
+
+- **Connection metrics:** 1 timeseries per exporter instance
+- **Scrape metrics:** 1 timeseries per exporter instance
+- **Collector metrics:** ~10-20 timeseries per exporter instance (depends on enabled collectors)
+- **Config metrics:** 1-2 timeseries per exporter instance
+
+Total: ~15-25 timeseries per exporter instance for self-monitoring.
+
+## See Also
+
+- [Metrics Overview](/reference/metrics/overview) - All PostgreSQL metrics
+- [Collectors Guide](/collectors/overview) - Detailed collector documentation
+- [Configuration Reference](/reference/configuration-file) - Exporter configuration options

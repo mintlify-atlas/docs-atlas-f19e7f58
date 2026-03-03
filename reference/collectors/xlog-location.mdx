@@ -1,0 +1,161 @@
+---
+title: xlog-location
+description: Reference documentation for the xlog-location collector
+---
+
+The `xlog_location` collector monitors the current transaction log (xlog) position on PostgreSQL servers.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.xlog-location`
+
+<Warning>
+This collector is **deprecated** and only works on **PostgreSQL 9.x**. It will automatically skip collection on PostgreSQL 10+.
+
+In PostgreSQL 10, "xlog" was renamed to "wal". Use the WAL-related collectors for PostgreSQL 10+.
+</Warning>
+
+## Metrics
+
+### pg_xlog_location_bytes
+
+**Type:** Gauge  
+**Description:** PostgreSQL LSN (Log Sequence Number) being generated on primary or replayed on replica
+
+**Labels:** None
+
+**Note:** The LSN value is truncated to the low 52 bits to fit in a float64.
+
+## SQL Query
+
+```sql
+SELECT CASE
+  WHEN pg_is_in_recovery() THEN 
+    (pg_last_xlog_replay_location() - '0/0') % (2^52)::bigint
+  ELSE 
+    (pg_current_xlog_location() - '0/0') % (2^52)::bigint
+END AS bytes
+```
+
+## How It Works
+
+The collector:
+1. Checks if the server is in recovery (replica) or primary
+2. **On primary:** Returns current WAL write position (`pg_current_xlog_location()`)
+3. **On replica:** Returns last replayed WAL position (`pg_last_xlog_replay_location()`)
+4. Converts LSN to bytes and truncates to 52 bits
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 9.x only
+
+**PostgreSQL 10+ behavior:** The collector detects PostgreSQL 10+ and logs a warning, skipping collection.
+
+## Why Truncate to 52 Bits?
+
+LSN values in PostgreSQL are 64-bit integers, but Prometheus stores metrics as float64. To avoid precision loss, the value is truncated using modulo `2^52` (the mantissa size of float64).
+
+This is sufficient for monitoring rate of change but may wrap around after ~4.5 petabytes of WAL.
+
+## Required Permissions
+
+The monitoring user needs:
+- Execute permission on `pg_current_xlog_location()` and `pg_last_xlog_replay_location()` functions
+- Granted to `PUBLIC` by default on PostgreSQL 9.x
+
+## Example Output
+
+**On Primary:**
+```
+pg_xlog_location_bytes 123456789012
+```
+
+**On Replica:**
+```
+pg_xlog_location_bytes 123456780000
+```
+
+## Use Cases (PostgreSQL 9.x Only)
+
+### Monitor WAL Generation Rate
+
+```promql
+# WAL bytes generated per second
+rate(pg_xlog_location_bytes[5m])
+```
+
+### Estimate Replication Lag
+
+Combine primary and replica metrics:
+```promql
+# Bytes behind primary (approximate)
+pg_xlog_location_bytes{instance="primary"} - 
+pg_xlog_location_bytes{instance="replica"}
+```
+
+## Migration to PostgreSQL 10+
+
+When upgrading from PostgreSQL 9.x to 10+:
+
+1. **Disable this collector:**
+   ```bash
+   --no-collector.xlog-location
+   ```
+
+2. **Use replacement collectors:**
+   - **WAL position monitoring:** Built into `replication` collector
+   - **WAL file monitoring:** Use `wal` collector
+   - **Replication lag:** Use `replication` collector
+
+## Function Name Changes in PostgreSQL 10
+
+| PostgreSQL 9.x | PostgreSQL 10+ |
+|----------------|----------------|
+| `pg_current_xlog_location()` | `pg_current_wal_lsn()` |
+| `pg_last_xlog_replay_location()` | `pg_last_wal_replay_lsn()` |
+| `pg_xlog/` directory | `pg_wal/` directory |
+
+## Example Migration
+
+**PostgreSQL 9.x configuration:**
+```bash
+pgexporter \
+  --collector.xlog-location \
+  --web.listen-address=:9187
+```
+
+**PostgreSQL 10+ configuration:**
+```bash
+pgexporter \
+  --collector.wal \
+  --collector.replication \
+  --web.listen-address=:9187
+```
+
+## Troubleshooting
+
+### Collector Skipped on PostgreSQL 10+
+
+Expected behavior. The collector logs:
+```
+xlog_location collector is not available on PostgreSQL >= 10.0.0, skipping
+```
+
+This is normal - use the `wal` and `replication` collectors instead.
+
+### Function Does Not Exist
+
+On PostgreSQL 10+, you'll see:
+```
+ERROR: function pg_current_xlog_location() does not exist
+```
+
+Solution: Disable this collector for PostgreSQL 10+.
+
+## Related
+
+- [wal collector](/reference/collectors/wal) (PostgreSQL 10+ replacement)
+- [replication collector](/reference/collectors/replication)
+- [PostgreSQL 10 xlog to wal renaming](https://wiki.postgresql.org/wiki/New_in_postgres_10#Renaming_of_.22xlog.22_to_.22wal.22_Globally_.28and_location.2Flsn.29)

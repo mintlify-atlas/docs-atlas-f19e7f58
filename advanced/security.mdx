@@ -1,0 +1,353 @@
+---
+title: Security Best Practices
+description: Secure your PostgreSQL exporter deployment with proper user permissions and authentication
+icon: shield-halved
+---
+
+Follow these security best practices to minimize the attack surface and protect your PostgreSQL infrastructure.
+
+## Running as Non-Superuser
+
+<Warning>
+  Never run the exporter with a PostgreSQL superuser account. Create a dedicated monitoring user with limited permissions.
+</Warning>
+
+The exporter only needs read access to statistics views and does not require superuser privileges.
+
+### PostgreSQL 10 and Later
+
+For PostgreSQL versions 10 and above, use the built-in `pg_monitor` role:
+
+```sql
+-- Create the monitoring user
+CREATE USER postgres_exporter WITH PASSWORD 'secure_password';
+
+-- Grant the monitoring role
+GRANT pg_monitor TO postgres_exporter;
+
+-- Grant connection permission
+GRANT CONNECT ON DATABASE postgres TO postgres_exporter;
+
+-- Set search path
+ALTER USER postgres_exporter SET SEARCH_PATH TO postgres_exporter,pg_catalog;
+```
+
+The `pg_monitor` role provides read access to all `pg_stat_*` views and functions needed for monitoring.
+
+### Complete Setup Script
+
+Here's a complete SQL script that safely creates the monitoring user:
+
+```sql
+-- Create function to safely create user if not exists
+CREATE OR REPLACE FUNCTION __tmp_create_user() returns void as $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT
+    FROM   pg_catalog.pg_user
+    WHERE  usename = 'postgres_exporter'
+  ) THEN
+    CREATE USER postgres_exporter;
+  END IF;
+END;
+$$ language plpgsql;
+
+SELECT __tmp_create_user();
+DROP FUNCTION __tmp_create_user();
+
+ALTER USER postgres_exporter WITH PASSWORD 'password';
+ALTER USER postgres_exporter SET SEARCH_PATH TO postgres_exporter,pg_catalog;
+
+-- If deploying as non-superuser (e.g., AWS RDS), uncomment and replace <MASTER_USER>
+-- GRANT postgres_exporter TO <MASTER_USER>;
+
+GRANT CONNECT ON DATABASE postgres TO postgres_exporter;
+GRANT pg_monitor TO postgres_exporter;
+```
+
+### PostgreSQL 9.x and Older
+
+For older PostgreSQL versions without the `pg_monitor` role, you must create wrapper functions and views:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS postgres_exporter;
+GRANT USAGE ON SCHEMA postgres_exporter TO postgres_exporter;
+
+-- Wrapper function for pg_stat_activity
+CREATE OR REPLACE FUNCTION get_pg_stat_activity() RETURNS SETOF pg_stat_activity AS
+$$ SELECT * FROM pg_catalog.pg_stat_activity; $$
+LANGUAGE sql
+VOLATILE
+SECURITY DEFINER;
+
+CREATE OR REPLACE VIEW postgres_exporter.pg_stat_activity AS
+  SELECT * from get_pg_stat_activity();
+
+GRANT SELECT ON postgres_exporter.pg_stat_activity TO postgres_exporter;
+
+-- Wrapper function for pg_stat_replication
+CREATE OR REPLACE FUNCTION get_pg_stat_replication() RETURNS SETOF pg_stat_replication AS
+$$ SELECT * FROM pg_catalog.pg_stat_replication; $$
+LANGUAGE sql
+VOLATILE
+SECURITY DEFINER;
+
+CREATE OR REPLACE VIEW postgres_exporter.pg_stat_replication AS
+  SELECT * FROM get_pg_stat_replication();
+
+GRANT SELECT ON postgres_exporter.pg_stat_replication TO postgres_exporter;
+
+-- Wrapper for pg_stat_statements (if extension is installed)
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+CREATE OR REPLACE FUNCTION get_pg_stat_statements() RETURNS SETOF pg_stat_statements AS
+$$ SELECT * FROM public.pg_stat_statements; $$
+LANGUAGE sql
+VOLATILE
+SECURITY DEFINER;
+
+CREATE OR REPLACE VIEW postgres_exporter.pg_stat_statements AS
+  SELECT * FROM get_pg_stat_statements();
+
+GRANT SELECT ON postgres_exporter.pg_stat_statements TO postgres_exporter;
+```
+
+## Password Management
+
+### Using Password Files
+
+<Tip>
+  Store passwords in files instead of environment variables to prevent exposure in process listings and logs.
+</Tip>
+
+Use `DATA_SOURCE_PASS_FILE` to read the password from a file:
+
+```bash
+# Create a password file
+echo "your_secure_password" > /secrets/postgres_password
+chmod 600 /secrets/postgres_password
+
+# Run the exporter
+export DATA_SOURCE_URI="localhost:5432/postgres?sslmode=require"
+export DATA_SOURCE_USER="postgres_exporter"
+export DATA_SOURCE_PASS_FILE="/secrets/postgres_password"
+./postgres_exporter
+```
+
+### Docker Password Files
+
+When running in Docker, the container process runs as uid/gid `65534`. Ensure the password file has correct permissions:
+
+```bash
+docker run \
+  --net=host \
+  -v /secrets/postgres_password:/secrets/password:ro \
+  -e DATA_SOURCE_URI="localhost:5432/postgres?sslmode=require" \
+  -e DATA_SOURCE_USER="postgres_exporter" \
+  -e DATA_SOURCE_PASS_FILE="/secrets/password" \
+  quay.io/prometheuscommunity/postgres-exporter
+```
+
+### Kubernetes Secrets
+
+In Kubernetes, use Secrets mounted as volumes:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-exporter-password
+type: Opaque
+stringData:
+  password: "your_secure_password"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+spec:
+  template:
+    spec:
+      containers:
+      - name: postgres-exporter
+        image: quay.io/prometheuscommunity/postgres-exporter
+        env:
+        - name: DATA_SOURCE_URI
+          value: "postgres:5432/postgres?sslmode=require"
+        - name: DATA_SOURCE_USER
+          value: "postgres_exporter"
+        - name: DATA_SOURCE_PASS_FILE
+          value: "/secrets/password"
+        volumeMounts:
+        - name: password
+          mountPath: /secrets
+          readOnly: true
+      volumes:
+      - name: password
+        secret:
+          secretName: postgres-exporter-password
+          items:
+          - key: password
+            path: password
+            mode: 0400
+```
+
+## TLS/SSL Configuration
+
+### Enforcing SSL Connections
+
+Always use SSL when connecting over untrusted networks:
+
+```bash
+# Require SSL
+DATA_SOURCE_URI="postgres.example.com:5432/postgres?sslmode=require"
+
+# Verify CA certificate
+DATA_SOURCE_URI="postgres.example.com:5432/postgres?sslmode=verify-ca&sslrootcert=/path/to/ca.crt"
+
+# Full verification (hostname and CA)
+DATA_SOURCE_URI="postgres.example.com:5432/postgres?sslmode=verify-full&sslrootcert=/path/to/ca.crt"
+```
+
+### SSL Mode Options
+
+| Mode | Description | Protects Against |
+|------|-------------|------------------|
+| `disable` | No SSL (plaintext) | Nothing - **never use in production** |
+| `require` | SSL required, no verification | Passive eavesdropping |
+| `verify-ca` | Verify server certificate | Passive and active MITM attacks |
+| `verify-full` | Verify certificate and hostname | Passive and active MITM attacks |
+
+<Warning>
+  Using `sslmode=disable` sends credentials in plaintext. Only use for local development with `localhost` connections.
+</Warning>
+
+### Client Certificates
+
+For mutual TLS authentication:
+
+```bash
+DATA_SOURCE_URI="postgres.example.com:5432/postgres?sslmode=verify-full&sslrootcert=/certs/ca.crt&sslcert=/certs/client.crt&sslkey=/certs/client.key"
+```
+
+## Securing the Exporter Endpoint
+
+The exporter's metrics endpoint exposes database statistics. Protect it with authentication.
+
+### TLS for the Exporter
+
+Use the `--web.config.file` flag to enable TLS:
+
+```yaml
+# web-config.yml
+tls_server_config:
+  cert_file: /path/to/cert.pem
+  key_file: /path/to/key.pem
+```
+
+```bash
+./postgres_exporter --web.config.file=web-config.yml
+```
+
+### Basic Authentication
+
+Add basic auth to the web config:
+
+```yaml
+# web-config.yml
+basic_auth_users:
+  prometheus: $2y$10$XYZ...  # bcrypt hash of password
+```
+
+Generate password hashes:
+
+```bash
+htpasswd -nBC 10 "" | tr -d ':'
+```
+
+See the [exporter-toolkit documentation](https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md) for full configuration options.
+
+## Network Security
+
+### Firewall Rules
+
+Restrict access to the exporter's port (default 9187):
+
+```bash
+# Only allow Prometheus server
+iptables -A INPUT -p tcp --dport 9187 -s prometheus-server-ip -j ACCEPT
+iptables -A INPUT -p tcp --dport 9187 -j DROP
+```
+
+### Docker Network Isolation
+
+Use Docker networks to isolate components:
+
+```bash
+# Create isolated network
+docker network create monitoring
+
+# Run PostgreSQL
+docker run --network monitoring --name postgres postgres
+
+# Run exporter (can access postgres, not exposed externally)
+docker run --network monitoring \
+  -e DATA_SOURCE_URI="postgres:5432/postgres" \
+  quay.io/prometheuscommunity/postgres-exporter
+```
+
+## AWS RDS Considerations
+
+When monitoring AWS RDS PostgreSQL:
+
+```sql
+-- Grant monitoring role to RDS master user first
+GRANT postgres_exporter TO your_rds_master_user;
+
+-- Then grant pg_monitor
+GRANT pg_monitor TO postgres_exporter;
+```
+
+## Security Checklist
+
+<AccordionGroup>
+  <Accordion title="Database User">
+    - [ ] Created dedicated `postgres_exporter` user
+    - [ ] Granted `pg_monitor` role (PostgreSQL 10+)
+    - [ ] Did NOT grant superuser privileges
+    - [ ] Set strong password
+    - [ ] Limited connection to specific databases
+  </Accordion>
+
+  <Accordion title="Credentials">
+    - [ ] Using `DATA_SOURCE_PASS_FILE` instead of `DATA_SOURCE_PASS`
+    - [ ] Password file has restrictive permissions (600 or 400)
+    - [ ] Credentials not visible in process list
+    - [ ] Not logging credentials in application logs
+  </Accordion>
+
+  <Accordion title="Network">
+    - [ ] Using `sslmode=require` or higher
+    - [ ] Not using `sslmode=disable` in production
+    - [ ] Firewall rules limiting exporter access
+    - [ ] TLS enabled for exporter endpoint
+  </Accordion>
+
+  <Accordion title="Exporter">
+    - [ ] Running as non-root user
+    - [ ] Web config file with authentication
+    - [ ] Metrics endpoint not publicly accessible
+    - [ ] Regular updates to latest version
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Multi-target Support" icon="target" href="/advanced/multi-target">
+    Monitor multiple PostgreSQL instances
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/advanced/troubleshooting">
+    Resolve common connection and permission issues
+  </Card>
+</CardGroup>

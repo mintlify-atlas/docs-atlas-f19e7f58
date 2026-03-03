@@ -1,0 +1,170 @@
+---
+title: Replication Collector
+description: Monitor PostgreSQL replication lag and status
+---
+
+The replication collector monitors PostgreSQL streaming replication, providing visibility into replication lag, replica status, and last replay timestamps.
+
+<Note>
+This collector is **enabled by default**.
+</Note>
+
+## What It Monitors
+
+The replication collector tracks:
+
+- Replication lag in seconds (how far behind the replica is)
+- Whether the instance is a replica or primary
+- Age of the last transaction replay on replicas
+
+## Metrics Exposed
+
+### pg_replication_lag_seconds
+
+Replication lag behind the primary in seconds.
+
+**Type:** Gauge  
+**Labels:** None
+
+**Values:**
+- `0` - No lag (or instance is the primary)
+- `> 0` - Lag in seconds behind the primary
+
+**Example:**
+```promql
+pg_replication_lag_seconds 2.5
+```
+
+### pg_replication_is_replica
+
+Indicates whether the PostgreSQL instance is a replica.
+
+**Type:** Gauge  
+**Labels:** None
+
+**Values:**
+- `1` - Instance is a replica
+- `0` - Instance is the primary
+
+**Example:**
+```promql
+pg_replication_is_replica 1
+```
+
+### pg_replication_last_replay_seconds
+
+Age of the last replayed transaction in seconds.
+
+**Type:** Gauge  
+**Labels:** None
+
+**Example:**
+```promql
+pg_replication_last_replay_seconds 3.2
+```
+
+## SQL Query Used
+
+The collector executes the following query:
+
+```sql
+SELECT
+    CASE
+        WHEN NOT pg_is_in_recovery() THEN 0
+        WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0
+        ELSE GREATEST(0, EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())))
+    END AS lag,
+    CASE
+        WHEN pg_is_in_recovery() THEN 1
+        ELSE 0
+    END as is_replica,
+    GREATEST(0, EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))) as last_replay
+```
+
+## Configuration
+
+### Enable/Disable the Collector
+
+```bash
+# Disable the replication collector
+postgres_exporter --no-collector.replication
+
+# Explicitly enable it (default behavior)
+postgres_exporter --collector.replication
+```
+
+## Use Cases
+
+### Alert on High Replication Lag
+
+Create alerts when replicas fall behind:
+
+```promql
+pg_replication_lag_seconds > 60
+```
+
+### Monitor Replication Health
+
+Track replication lag over time:
+
+```promql
+rate(pg_replication_lag_seconds[5m])
+```
+
+### Verify Replica Status
+
+Ensure your replica instances are properly configured:
+
+```promql
+pg_replication_is_replica == 1
+```
+
+### Detect Stale Replicas
+
+Alert when the last replay is too old:
+
+```promql
+pg_replication_last_replay_seconds > 300
+```
+
+## Behavior on Primary vs Replica
+
+### On Primary Instances
+
+- `pg_replication_lag_seconds` = `0`
+- `pg_replication_is_replica` = `0`
+- `pg_replication_last_replay_seconds` may be `0` or undefined
+
+### On Replica Instances
+
+- `pg_replication_lag_seconds` = seconds behind primary
+- `pg_replication_is_replica` = `1`
+- `pg_replication_last_replay_seconds` = age of last transaction replayed
+
+## Permissions Required
+
+The replication collector requires:
+
+- `CONNECT` privilege on the database
+- Access to replication functions:
+  - `pg_is_in_recovery()`
+  - `pg_last_wal_receive_lsn()`
+  - `pg_last_wal_replay_lsn()`
+  - `pg_last_xact_replay_timestamp()`
+- For PostgreSQL 10+: `pg_monitor` or `pg_read_all_stats` role
+- For PostgreSQL &lt;10: Read access to replication functions
+
+## Related Collectors
+
+- [WAL Collector](/collectors/wal) - Monitors Write-Ahead Log segments
+- Replication Slot Collector - Tracks replication slot usage (if enabled)
+- WAL Receiver Collector - Statistics on WAL receiver process (if enabled)
+
+## Performance Considerations
+
+The replication collector:
+
+- Executes a single lightweight query
+- Has minimal performance impact
+- Queries system functions, not user tables
+- Safe to run on both primary and replica instances

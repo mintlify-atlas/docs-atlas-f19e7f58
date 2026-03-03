@@ -1,0 +1,352 @@
+---
+title: Data Source Configuration
+description: Configure database connection strings for PostgreSQL Server Exporter
+---
+
+The PostgreSQL Server Exporter requires a data source name (DSN) to connect to your PostgreSQL database. This page explains the different ways to configure your database connection.
+
+## Connection Methods
+
+The exporter supports multiple environment variables for configuring database connections, with different precedence levels.
+
+### Precedence Order
+
+The exporter checks for data sources in the following order:
+
+<Steps>
+  <Step title="DATA_SOURCE_NAME">
+    Legacy format that takes highest precedence. Can contain username and password.
+  </Step>
+  <Step title="DATA_SOURCE_USER_FILE + DATA_SOURCE_PASS_FILE">
+    File-based secrets for username and password (recommended for security)
+  </Step>
+  <Step title="DATA_SOURCE_USER + DATA_SOURCE_PASS">
+    Environment variables for username and password
+  </Step>
+</Steps>
+
+<Info>
+The `DATA_SOURCE_NAME` variable always wins to maintain backward compatibility. If set, all other configuration methods are ignored.
+</Info>
+
+## DATA_SOURCE_NAME
+
+The legacy all-in-one connection string format. Accepts both URI and key=value formats.
+
+<ParamField path="DATA_SOURCE_NAME" type="string">
+  Complete connection string including username and password. Supports both PostgreSQL URI format and key=value pairs.
+</ParamField>
+
+### URI Format
+
+```bash
+export DATA_SOURCE_NAME="postgresql://username:password@hostname:5432/database?sslmode=require"
+```
+
+### Key=Value Format
+
+```bash
+export DATA_SOURCE_NAME="user=postgres password=secret host=localhost port=5432 dbname=mydb sslmode=disable"
+```
+
+### Unix Socket Connection
+
+For local connections using Unix sockets:
+
+```bash
+export DATA_SOURCE_NAME="user=postgres host=/var/run/postgresql/ sslmode=disable"
+```
+
+### Multiple Databases
+
+You can monitor multiple PostgreSQL instances by providing a comma-separated list:
+
+```bash
+export DATA_SOURCE_NAME="port=5432,port=6432"
+```
+
+<Warning>
+Storing passwords in environment variables exposes them in process listings. Consider using the split format with file-based secrets instead.
+</Warning>
+
+## Split Format (Recommended)
+
+For better security, split the connection details into separate components:
+
+### DATA_SOURCE_URI
+
+<ParamField path="DATA_SOURCE_URI" type="string">
+  Hostname and connection parameters without username or password.
+</ParamField>
+
+The URI without authentication credentials:
+
+```bash
+export DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable"
+```
+
+Format: `hostname:port/database?options`
+
+<Accordion title="URI Format Examples">
+  ```bash
+  # Basic connection
+  DATA_SOURCE_URI="localhost:5432/postgres"
+  
+  # With SSL enabled
+  DATA_SOURCE_URI="db.example.com:5432/mydb?sslmode=require"
+  
+  # Custom connection timeout
+  DATA_SOURCE_URI="postgres.internal:5432/analytics?connect_timeout=10&sslmode=verify-full"
+  
+  # Default port (5432)
+  DATA_SOURCE_URI="dbhost/postgres?sslmode=disable"
+  ```
+</Accordion>
+
+### DATA_SOURCE_USER
+
+<ParamField path="DATA_SOURCE_USER" type="string">
+  Database username for authentication.
+</ParamField>
+
+```bash
+export DATA_SOURCE_USER="postgres_exporter"
+```
+
+### DATA_SOURCE_PASS
+
+<ParamField path="DATA_SOURCE_PASS" type="string">
+  Database password for authentication.
+</ParamField>
+
+```bash
+export DATA_SOURCE_PASS="your_secure_password"
+```
+
+## File-Based Secrets (Most Secure)
+
+Store sensitive credentials in files to avoid exposing them in environment variables or process listings.
+
+### DATA_SOURCE_USER_FILE
+
+<ParamField path="DATA_SOURCE_USER_FILE" type="string">
+  Path to a file containing the database username.
+</ParamField>
+
+```bash
+echo "postgres_exporter" > /run/secrets/db_user
+export DATA_SOURCE_USER_FILE="/run/secrets/db_user"
+```
+
+### DATA_SOURCE_PASS_FILE
+
+<ParamField path="DATA_SOURCE_PASS_FILE" type="string">
+  Path to a file containing the database password.
+</ParamField>
+
+```bash
+echo "your_secure_password" > /run/secrets/db_password
+chmod 600 /run/secrets/db_password
+export DATA_SOURCE_PASS_FILE="/run/secrets/db_password"
+```
+
+<Note>
+The exporter trims whitespace from file contents, so trailing newlines won't cause issues.
+</Note>
+
+### DATA_SOURCE_URI_FILE
+
+<ParamField path="DATA_SOURCE_URI_FILE" type="string">
+  Path to a file containing the DATA_SOURCE_URI value.
+</ParamField>
+
+```bash
+echo "db.example.com:5432/postgres?sslmode=require" > /run/secrets/db_uri
+export DATA_SOURCE_URI_FILE="/run/secrets/db_uri"
+```
+
+## Complete Examples
+
+<Tabs>
+  <Tab title="Docker with Files">
+    ```bash
+    # Create secret files
+    echo "postgres" > /tmp/db_user
+    echo "password" > /tmp/db_password
+    
+    docker run \
+      --net=host \
+      -v /tmp/db_user:/secrets/user:ro \
+      -v /tmp/db_password:/secrets/password:ro \
+      -e DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable" \
+      -e DATA_SOURCE_USER_FILE="/secrets/user" \
+      -e DATA_SOURCE_PASS_FILE="/secrets/password" \
+      quay.io/prometheuscommunity/postgres-exporter
+    ```
+    
+    <Note>
+    The container runs as uid/gid 65534. Ensure mounted files are readable by this user.
+    </Note>
+  </Tab>
+  <Tab title="Kubernetes Secret">
+    ```yaml
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: postgres-exporter-secret
+    type: Opaque
+    stringData:
+      username: postgres_exporter
+      password: secure_password
+      uri: postgres.default.svc.cluster.local:5432/postgres?sslmode=require
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: postgres-exporter
+    spec:
+      containers:
+      - name: postgres-exporter
+        image: quay.io/prometheuscommunity/postgres-exporter
+        env:
+        - name: DATA_SOURCE_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-exporter-secret
+              key: username
+        - name: DATA_SOURCE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: postgres-exporter-secret
+              key: password
+        - name: DATA_SOURCE_URI
+          valueFrom:
+            secretKeyRef:
+              name: postgres-exporter-secret
+              key: uri
+    ```
+  </Tab>
+  <Tab title="Systemd Service">
+    ```bash
+    sudo -u postgres DATA_SOURCE_NAME="user=postgres host=/var/run/postgresql/ sslmode=disable" \
+      postgres_exporter
+    ```
+    
+    Or with environment file:
+    
+    ```ini
+    # /etc/postgres_exporter/env
+    DATA_SOURCE_URI=localhost:5432/postgres?sslmode=disable
+    DATA_SOURCE_USER_FILE=/etc/postgres_exporter/secrets/user
+    DATA_SOURCE_PASS_FILE=/etc/postgres_exporter/secrets/password
+    ```
+    
+    ```systemd
+    [Service]
+    EnvironmentFile=/etc/postgres_exporter/env
+    ExecStart=/usr/local/bin/postgres_exporter
+    ```
+  </Tab>
+</Tabs>
+
+## DSN Format Reference
+
+The exporter uses the [github.com/lib/pq](https://github.com/lib/pq) library for PostgreSQL connections.
+
+### Supported URL Schemes
+
+- `postgresql://` (preferred)
+- `postgres://` (alias)
+
+### Common Connection Parameters
+
+<ParamField query="sslmode" type="string" default="require">
+  SSL connection mode: `disable`, `require`, `verify-ca`, `verify-full`
+</ParamField>
+
+<ParamField query="connect_timeout" type="integer" default="0">
+  Maximum wait for connection, in seconds. Zero means no timeout.
+</ParamField>
+
+<ParamField query="sslcert" type="string">
+  Path to client certificate file for SSL connections
+</ParamField>
+
+<ParamField query="sslkey" type="string">
+  Path to client private key file for SSL connections
+</ParamField>
+
+<ParamField query="sslrootcert" type="string">
+  Path to root certificate file for SSL verification
+</ParamField>
+
+<ParamField query="application_name" type="string" default="postgres_exporter">
+  Application name to report to PostgreSQL
+</ParamField>
+
+### Example with All Parameters
+
+```bash
+postgresql://myuser:mypass@postgres.example.com:5432/mydb?sslmode=verify-full&sslcert=/path/to/client-cert.pem&sslkey=/path/to/client-key.pem&sslrootcert=/path/to/ca-cert.pem&connect_timeout=10&application_name=metrics_exporter
+```
+
+## Verifying Your Connection
+
+Test your connection configuration:
+
+```bash
+# Set your environment variables
+export DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable"
+export DATA_SOURCE_USER="postgres"
+export DATA_SOURCE_PASS="password"
+
+# Start the exporter
+./postgres_exporter
+
+# Check metrics endpoint
+curl http://localhost:9187/metrics | grep pg_up
+```
+
+If connected successfully, you should see:
+```
+pg_up 1
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection refused">
+    - Verify PostgreSQL is running and listening on the specified host/port
+    - Check firewall rules allow connections from the exporter
+    - Ensure `listen_addresses` in `postgresql.conf` includes the exporter's IP
+  </Accordion>
+  
+  <Accordion title="Authentication failed">
+    - Verify username and password are correct
+    - Check `pg_hba.conf` allows connections from the exporter's host
+    - Ensure the user has necessary permissions (see [Running as Non-Superuser](/essentials/security))
+  </Accordion>
+  
+  <Accordion title="SSL/TLS errors">
+    - Check `sslmode` parameter matches your server's SSL configuration
+    - Verify certificate paths are correct and files are readable
+    - Try `sslmode=disable` to test without SSL (not for production)
+  </Accordion>
+  
+  <Accordion title="File permission errors">
+    - Ensure secret files are readable by the exporter process
+    - In Docker, the process runs as uid/gid 65534
+    - Check with: `ls -l /path/to/secret/file`
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication Modules" icon="key" href="/configuration/auth-modules">
+    Configure multi-target monitoring with auth modules
+  </Card>
+  <Card title="Environment Variables" icon="list" href="/configuration/environment-variables">
+    Explore all available environment variables
+  </Card>
+</CardGroup>

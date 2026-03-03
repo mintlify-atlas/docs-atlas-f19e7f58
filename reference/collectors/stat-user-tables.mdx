@@ -1,0 +1,350 @@
+---
+title: stat-user-tables
+description: Reference documentation for the stat-user-tables collector
+---
+
+The `stat_user_tables` collector exposes comprehensive statistics for user tables, including scan activity, tuple operations, vacuum history, and table sizes.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### Scan Metrics
+
+#### pg_stat_user_tables_seq_scan
+
+**Type:** Counter  
+**Description:** Number of sequential scans initiated on this table
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_seq_tup_read
+
+**Type:** Counter  
+**Description:** Number of live rows fetched by sequential scans
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_idx_scan
+
+**Type:** Counter  
+**Description:** Number of index scans initiated on this table
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_idx_tup_fetch
+
+**Type:** Counter  
+**Description:** Number of live rows fetched by index scans
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+### Tuple Modification Metrics
+
+#### pg_stat_user_tables_n_tup_ins
+
+**Type:** Counter  
+**Description:** Number of rows inserted
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_tup_upd
+
+**Type:** Counter  
+**Description:** Number of rows updated
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_tup_del
+
+**Type:** Counter  
+**Description:** Number of rows deleted
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_tup_hot_upd
+
+**Type:** Counter  
+**Description:** Number of rows HOT (Heap-Only Tuple) updated
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+**Note:** HOT updates don't require index updates, improving performance.
+
+### Live Data Metrics
+
+#### pg_stat_user_tables_n_live_tup
+
+**Type:** Gauge  
+**Description:** Estimated number of live rows
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_dead_tup
+
+**Type:** Gauge  
+**Description:** Estimated number of dead rows
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_mod_since_analyze
+
+**Type:** Gauge  
+**Description:** Estimated number of rows changed since last analyze
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+### Vacuum/Analyze Timestamps
+
+#### pg_stat_user_tables_last_vacuum
+
+**Type:** Gauge  
+**Description:** Last time this table was manually vacuumed (Unix timestamp, 0 if never)
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_last_autovacuum
+
+**Type:** Gauge  
+**Description:** Last time this table was vacuumed by autovacuum (Unix timestamp, 0 if never)
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_last_analyze
+
+**Type:** Gauge  
+**Description:** Last time this table was manually analyzed (Unix timestamp, 0 if never)
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_last_autoanalyze
+
+**Type:** Gauge  
+**Description:** Last time this table was analyzed by autovacuum (Unix timestamp, 0 if never)
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+### Vacuum/Analyze Counts
+
+#### pg_stat_user_tables_vacuum_count
+
+**Type:** Counter  
+**Description:** Number of times this table has been manually vacuumed
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_autovacuum_count
+
+**Type:** Counter  
+**Description:** Number of times this table has been vacuumed by autovacuum
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_analyze_count
+
+**Type:** Counter  
+**Description:** Number of times this table has been manually analyzed
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_autoanalyze_count
+
+**Type:** Counter  
+**Description:** Number of times this table has been analyzed by autovacuum
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+### Size Metrics
+
+#### pg_stat_user_tables_table_size_bytes
+
+**Type:** Gauge  
+**Description:** Total disk space used by this table, in bytes
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_index_size_bytes
+
+**Type:** Gauge  
+**Description:** Total disk space used by all indexes on this table, in bytes
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+## SQL Query
+
+```sql
+SELECT
+  current_database() datname,
+  schemaname,
+  relname,
+  seq_scan,
+  seq_tup_read,
+  idx_scan,
+  idx_tup_fetch,
+  n_tup_ins,
+  n_tup_upd,
+  n_tup_del,
+  n_tup_hot_upd,
+  n_live_tup,
+  n_dead_tup,
+  n_mod_since_analyze,
+  COALESCE(last_vacuum, '1970-01-01Z') as last_vacuum,
+  COALESCE(last_autovacuum, '1970-01-01Z') as last_autovacuum,
+  COALESCE(last_analyze, '1970-01-01Z') as last_analyze,
+  COALESCE(last_autoanalyze, '1970-01-01Z') as last_autoanalyze,
+  vacuum_count,
+  autovacuum_count,
+  analyze_count,
+  autoanalyze_count,
+  pg_indexes_size(relid) as indexes_size,
+  pg_table_size(relid) as table_size
+FROM pg_stat_user_tables
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_stat_user_tables` view
+- Execute permission on `pg_table_size()` and `pg_indexes_size()` functions
+
+## Example Output
+
+```
+pg_stat_user_tables_seq_scan{datname="myapp",schemaname="public",relname="users"} 1250
+pg_stat_user_tables_idx_scan{datname="myapp",schemaname="public",relname="users"} 125000
+pg_stat_user_tables_n_tup_ins{datname="myapp",schemaname="public",relname="users"} 50000
+pg_stat_user_tables_n_live_tup{datname="myapp",schemaname="public",relname="users"} 45000
+pg_stat_user_tables_n_dead_tup{datname="myapp",schemaname="public",relname="users"} 1200
+pg_stat_user_tables_table_size_bytes{datname="myapp",schemaname="public",relname="users"} 8388608
+```
+
+## Use Cases
+
+### Sequential Scan Detection
+
+```promql
+# Tables with high sequential scan rate
+rate(pg_stat_user_tables_seq_scan[5m]) > 1
+
+# Ratio of sequential to index scans
+rate(pg_stat_user_tables_seq_scan[5m]) /
+(rate(pg_stat_user_tables_seq_scan[5m]) + rate(pg_stat_user_tables_idx_scan[5m]))
+```
+
+High sequential scan rates may indicate missing indexes.
+
+### Dead Tuple Monitoring
+
+```promql
+# Dead tuple ratio
+pg_stat_user_tables_n_dead_tup / 
+(pg_stat_user_tables_n_live_tup + pg_stat_user_tables_n_dead_tup)
+
+# Tables with many dead tuples
+pg_stat_user_tables_n_dead_tup > 10000
+```
+
+### Vacuum Effectiveness
+
+```promql
+# Time since last autovacuum
+time() - pg_stat_user_tables_last_autovacuum
+
+# Tables never vacuumed
+pg_stat_user_tables_last_autovacuum == 0
+```
+
+### Table Bloat Detection
+
+```promql
+# Estimated bloat percentage (rough)
+100 * pg_stat_user_tables_n_dead_tup / 
+(pg_stat_user_tables_n_live_tup + pg_stat_user_tables_n_dead_tup)
+```
+
+### HOT Update Ratio
+
+```promql
+# Percentage of updates that are HOT
+rate(pg_stat_user_tables_n_tup_hot_upd[5m]) /
+rate(pg_stat_user_tables_n_tup_upd[5m])
+```
+
+Higher HOT update ratio is better (less index maintenance).
+
+### Table Growth
+
+```promql
+# Insert rate per table
+rate(pg_stat_user_tables_n_tup_ins[5m])
+
+# Total modification rate
+rate(pg_stat_user_tables_n_tup_ins[5m]) +
+rate(pg_stat_user_tables_n_tup_upd[5m]) +
+rate(pg_stat_user_tables_n_tup_del[5m])
+```
+
+## Alert Examples
+
+```yaml
+- alert: HighDeadTuples
+  expr: |
+    pg_stat_user_tables_n_dead_tup /
+    (pg_stat_user_tables_n_live_tup + 1) > 0.1
+    and pg_stat_user_tables_n_dead_tup > 1000
+  annotations:
+    summary: "Table has high dead tuple ratio"
+    description: "{{ $labels.relname }} has {{ $value }}% dead tuples"
+
+- alert: VacuumNotRunning
+  expr: time() - pg_stat_user_tables_last_autovacuum > 86400
+  annotations:
+    summary: "Table not vacuumed in 24 hours"
+    description: "{{ $labels.relname }} last vacuumed {{ $value }}s ago"
+
+- alert: FrequentSequentialScans
+  expr: |
+    rate(pg_stat_user_tables_seq_scan[5m]) > 10
+    and pg_stat_user_tables_n_live_tup > 10000
+  annotations:
+    summary: "Large table being sequentially scanned"
+    description: "{{ $labels.relname }} ({{ $labels.n_live_tup }} rows) scanned {{ $value }}/sec"
+```
+
+## Performance Tuning
+
+### Missing Indexes
+
+If `seq_scan` is high on large tables:
+```sql
+-- Find tables with many sequential scans
+SELECT schemaname, relname, seq_scan, idx_scan, n_live_tup
+FROM pg_stat_user_tables
+WHERE seq_scan > 100
+  AND n_live_tup > 10000
+ORDER BY seq_scan DESC;
+```
+
+### Autovacuum Tuning
+
+If dead tuples accumulate:
+- Lower `autovacuum_vacuum_scale_factor`
+- Lower `autovacuum_vacuum_threshold`
+- Increase `autovacuum_max_workers`
+
+### Analyze Frequency
+
+If `n_mod_since_analyze` is high:
+- Lower `autovacuum_analyze_scale_factor`
+- Run manual `ANALYZE` on frequently modified tables
+
+## Related
+
+- [pg_stat_user_tables view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES-VIEW)
+- [Routine vacuuming](https://www.postgresql.org/docs/current/routine-vacuuming.html)

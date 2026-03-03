@@ -1,0 +1,553 @@
+---
+title: Environment Variables
+description: Complete reference for postgres_exporter environment variables
+---
+
+This page documents all environment variables supported by postgres_exporter.
+
+## Data Source Configuration
+
+These environment variables configure the PostgreSQL connection for single-target deployments.
+
+### DATA_SOURCE_NAME
+
+| Property | Value |
+|----------|-------|
+| **Type** | string |
+| **Default** | - (no default) |
+| **Required** | No (but one data source method is required) |
+| **Format** | PostgreSQL connection string (URI or key=value) |
+
+The legacy connection string format. Supports both URI format and key=value format.
+
+**URI Format:**
+```bash
+DATA_SOURCE_NAME="postgresql://username:password@hostname:5432/database?sslmode=disable"
+```
+
+**Key=Value Format:**
+```bash
+DATA_SOURCE_NAME="user=postgres password=secret host=localhost port=5432 dbname=postgres sslmode=disable"
+```
+
+**Multiple Data Sources:**
+```bash
+# Comma-separated for multiple databases (DEPRECATED)
+DATA_SOURCE_NAME="port=5432,port=6432"
+```
+
+<Warning>
+Storing passwords in environment variables can be insecure. Use `DATA_SOURCE_PASS_FILE` for better security.
+</Warning>
+
+### DATA_SOURCE_URI
+
+| Property | Value |
+|----------|-------|
+| **Type** | string |
+| **Default** | - (no default) |
+| **Required** | No |
+| **Format** | `hostname[:port][/database][?params]` |
+
+Hostname and optional connection parameters without username or password. Use with `DATA_SOURCE_USER` and `DATA_SOURCE_PASS`.
+
+**Examples:**
+```bash
+# Basic hostname
+DATA_SOURCE_URI="localhost"
+
+# With port
+DATA_SOURCE_URI="localhost:5432"
+
+# With database
+DATA_SOURCE_URI="localhost:5432/postgres"
+
+# With connection parameters
+DATA_SOURCE_URI="localhost:5432/postgres?sslmode=require"
+```
+
+### DATA_SOURCE_URI_FILE
+
+| Property | Value |
+|----------|-------|
+| **Type** | string (file path) |
+| **Default** | - (no default) |
+| **Required** | No |
+
+Path to a file containing the data source URI. The file should contain only the URI string.
+
+**Example:**
+```bash
+DATA_SOURCE_URI_FILE="/run/secrets/postgres_uri"
+```
+
+### DATA_SOURCE_USER
+
+| Property | Value |
+|----------|-------|
+| **Type** | string |
+| **Default** | - (no default) |
+| **Required** | When using `DATA_SOURCE_URI` |
+
+PostgreSQL username for authentication. Used in conjunction with `DATA_SOURCE_URI`.
+
+**Example:**
+```bash
+DATA_SOURCE_USER="postgres_exporter"
+```
+
+### DATA_SOURCE_USER_FILE
+
+| Property | Value |
+|----------|-------|
+| **Type** | string (file path) |
+| **Default** | - (no default) |
+| **Required** | No |
+
+Path to a file containing the PostgreSQL username.
+
+**Example:**
+```bash
+DATA_SOURCE_USER_FILE="/run/secrets/postgres_user"
+```
+
+### DATA_SOURCE_PASS
+
+| Property | Value |
+|----------|-------|
+| **Type** | string |
+| **Default** | - (no default) |
+| **Required** | When using `DATA_SOURCE_URI` |
+
+PostgreSQL password for authentication. Used in conjunction with `DATA_SOURCE_URI`.
+
+**Example:**
+```bash
+DATA_SOURCE_PASS="secure_password"
+```
+
+<Warning>
+Avoid using `DATA_SOURCE_PASS` directly. Use `DATA_SOURCE_PASS_FILE` instead for better security.
+</Warning>
+
+### DATA_SOURCE_PASS_FILE
+
+| Property | Value |
+|----------|-------|
+| **Type** | string (file path) |
+| **Default** | - (no default) |
+| **Required** | No |
+
+Path to a file containing the PostgreSQL password. This is the **recommended** way to provide credentials.
+
+**Example:**
+```bash
+DATA_SOURCE_PASS_FILE="/run/secrets/postgres_password"
+```
+
+**Docker Secrets Example:**
+```bash
+docker run \
+  -e DATA_SOURCE_URI="db.example.com:5432/postgres" \
+  -e DATA_SOURCE_USER="postgres_exporter" \
+  -e DATA_SOURCE_PASS_FILE="/run/secrets/db_password" \
+  -v /path/to/password:/run/secrets/db_password:ro \
+  quay.io/prometheuscommunity/postgres-exporter
+```
+
+## Exporter Configuration
+
+These variables configure the exporter's behavior and can be overridden by command-line flags.
+
+### PG_EXPORTER_WEB_TELEMETRY_PATH
+
+| Property | Value |
+|----------|-------|
+| **Type** | string |
+| **Default** | `/metrics` |
+| **Flag** | `--web.telemetry-path` |
+
+Path under which to expose metrics.
+
+**Example:**
+```bash
+PG_EXPORTER_WEB_TELEMETRY_PATH="/custom-metrics"
+```
+
+### PG_EXPORTER_DISABLE_DEFAULT_METRICS
+
+| Property | Value |
+|----------|-------|
+| **Type** | boolean (`true`/`false`) |
+| **Default** | `false` |
+| **Flag** | `--disable-default-metrics` |
+
+Disable all built-in metrics. Only metrics from custom queries will be exported.
+
+**Example:**
+```bash
+PG_EXPORTER_DISABLE_DEFAULT_METRICS="true"
+```
+
+### PG_EXPORTER_DISABLE_SETTINGS_METRICS
+
+| Property | Value |
+|----------|-------|
+| **Type** | boolean (`true`/`false`) |
+| **Default** | `false` |
+| **Flag** | `--disable-settings-metrics` |
+
+Disable scraping of `pg_settings` metrics.
+
+**Example:**
+```bash
+PG_EXPORTER_DISABLE_SETTINGS_METRICS="true"
+```
+
+### PG_EXPORTER_METRIC_PREFIX
+
+| Property | Value |
+|----------|-------|
+| **Type** | string |
+| **Default** | `pg` |
+| **Flag** | `--metric-prefix` |
+
+Prefix for all exported metrics. Default prefix is `pg_`.
+
+**Example:**
+```bash
+PG_EXPORTER_METRIC_PREFIX="postgres"
+# Results in metrics like: postgres_up, postgres_database_size_bytes
+```
+
+### PG_EXPORTER_COLLECTION_TIMEOUT
+
+| Property | Value |
+|----------|-------|
+| **Type** | duration string |
+| **Default** | `1m` |
+| **Flag** | `--collection-timeout` |
+
+Timeout for collecting statistics. Connection is dropped when timeout is reached.
+
+**Valid values:** Any valid Go duration (e.g., `30s`, `1m`, `90s`). Minimum is `1ms`.
+
+**Example:**
+```bash
+PG_EXPORTER_COLLECTION_TIMEOUT="30s"
+```
+
+<Info>
+Setting a timeout prevents connections from stacking when the database is slow (e.g., during large DDL operations). It helps avoid exhausting the database connection pool.
+</Info>
+
+## Deprecated Variables
+
+<Warning>
+These environment variables are deprecated and maintained for backward compatibility only. They will be removed in a future release.
+</Warning>
+
+### PG_EXPORTER_AUTO_DISCOVER_DATABASES
+
+| Property | Value |
+|----------|-------|
+| **Type** | boolean (`true`/`false`) |
+| **Default** | `false` |
+| **Flag** | `--auto-discover-databases` |
+| **Status** | DEPRECATED |
+
+Dynamically discover and scrape all databases on the server.
+
+**Replacement:** Use the [multi-target pattern](/advanced/multi-target) instead.
+
+### PG_EXPORTER_EXCLUDE_DATABASES
+
+| Property | Value |
+|----------|-------|
+| **Type** | string (comma-separated) |
+| **Default** | `""` |
+| **Flag** | `--exclude-databases` |
+| **Status** | DEPRECATED |
+
+Comma-separated list of databases to exclude when auto-discovery is enabled.
+
+**Example:**
+```bash
+PG_EXPORTER_EXCLUDE_DATABASES="template0,template1,postgres"
+```
+
+### PG_EXPORTER_INCLUDE_DATABASES
+
+| Property | Value |
+|----------|-------|
+| **Type** | string (comma-separated) |
+| **Default** | `""` |
+| **Flag** | `--include-databases` |
+| **Status** | DEPRECATED |
+
+Comma-separated list of databases to include when auto-discovery is enabled. Empty means all databases.
+
+**Example:**
+```bash
+PG_EXPORTER_INCLUDE_DATABASES="production,staging"
+```
+
+### PG_EXPORTER_EXTEND_QUERY_PATH
+
+| Property | Value |
+|----------|-------|
+| **Type** | string (file path) |
+| **Default** | `""` |
+| **Flag** | `--extend.query-path` |
+| **Status** | DEPRECATED |
+
+Path to a YAML file containing custom queries.
+
+**Replacement:** Use built-in collectors or [sql_exporter](https://github.com/burningalchemist/sql_exporter) for custom metrics.
+
+### PG_EXPORTER_CONSTANT_LABELS
+
+| Property | Value |
+|----------|-------|
+| **Type** | string (comma-separated `label=value` pairs) |
+| **Default** | `""` |
+| **Flag** | `--constantLabels` |
+| **Status** | DEPRECATED |
+
+Comma-separated list of label=value pairs to add to all metrics.
+
+**Example:**
+```bash
+PG_EXPORTER_CONSTANT_LABELS="environment=production,region=us-east-1"
+```
+
+**Replacement:** Use Prometheus relabeling configuration instead.
+
+## Variable Precedence
+
+Configuration values are resolved in this order (highest to lowest priority):
+
+1. **Command-line flags** (highest priority)
+2. **Environment variables** 
+3. **Configuration file** (for auth modules only)
+4. **Default values** (lowest priority)
+
+### Example
+
+```bash
+# Environment variable sets default
+export PG_EXPORTER_WEB_TELEMETRY_PATH="/env-metrics"
+
+# Flag overrides environment variable
+postgres_exporter --web.telemetry-path="/flag-metrics"
+
+# Result: metrics exposed at /flag-metrics
+```
+
+## Data Source Examples
+
+### Basic Configuration
+
+```bash
+# Simple local connection
+DATA_SOURCE_NAME="postgresql://postgres:password@localhost:5432/postgres?sslmode=disable"
+```
+
+### Secure Configuration with File-based Password
+
+```bash
+# Recommended for production
+DATA_SOURCE_URI="db.example.com:5432/postgres?sslmode=require"
+DATA_SOURCE_USER="postgres_exporter"
+DATA_SOURCE_PASS_FILE="/run/secrets/db_password"
+```
+
+### Unix Socket Connection
+
+```bash
+# Local Unix socket connection
+DATA_SOURCE_NAME="user=postgres host=/var/run/postgresql/ sslmode=disable"
+```
+
+### SSL/TLS Connection
+
+```bash
+DATA_SOURCE_NAME="postgresql://user:pass@db.example.com:5432/postgres?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca-bundle.crt"
+```
+
+### Docker Compose Example
+
+```yaml
+version: '3'
+services:
+  postgres_exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/postgres?sslmode=disable"
+      DATA_SOURCE_USER: "postgres"
+      DATA_SOURCE_PASS: "password"
+      PG_EXPORTER_COLLECTION_TIMEOUT: "30s"
+      PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+    ports:
+      - "9187:9187"
+```
+
+### Kubernetes Secret Example
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-exporter-secret
+type: Opaque
+stringData:
+  datasource: "postgresql://postgres_exporter:password@postgres:5432/postgres?sslmode=disable"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+spec:
+  template:
+    spec:
+      containers:
+      - name: postgres-exporter
+        image: quay.io/prometheuscommunity/postgres-exporter
+        env:
+        - name: DATA_SOURCE_NAME
+          valueFrom:
+            secretKeyRef:
+              name: postgres-exporter-secret
+              key: datasource
+```
+
+## Complete Configuration Example
+
+```bash
+#!/bin/bash
+# Production postgres_exporter configuration
+
+# Data source
+export DATA_SOURCE_URI="db.example.com:5432/postgres"
+export DATA_SOURCE_USER="postgres_exporter"
+export DATA_SOURCE_PASS_FILE="/run/secrets/postgres_password"
+
+# Exporter settings
+export PG_EXPORTER_WEB_TELEMETRY_PATH="/metrics"
+export PG_EXPORTER_COLLECTION_TIMEOUT="30s"
+export PG_EXPORTER_METRIC_PREFIX="pg"
+
+# Disable certain features
+export PG_EXPORTER_DISABLE_SETTINGS_METRICS="false"
+export PG_EXPORTER_DISABLE_DEFAULT_METRICS="false"
+
+# Start the exporter
+exec postgres_exporter \
+  --web.listen-address=:9187 \
+  --collector.database_wraparound \
+  --collector.long_running_transactions
+```
+
+## Security Best Practices
+
+### File-Based Credentials
+
+**Always prefer file-based credentials over environment variables:**
+
+```bash
+# Good - uses file
+DATA_SOURCE_PASS_FILE="/run/secrets/password"
+
+# Bad - password in environment
+DATA_SOURCE_PASS="my_password"
+```
+
+### File Permissions
+
+```bash
+# Secure password file
+chmod 600 /run/secrets/postgres_password
+chown postgres_exporter:postgres_exporter /run/secrets/postgres_password
+```
+
+### Docker Secrets
+
+```bash
+# Create Docker secret
+echo "secure_password" | docker secret create db_password -
+
+# Use in service
+docker service create \
+  --name postgres_exporter \
+  --secret db_password \
+  -e DATA_SOURCE_URI="postgres:5432/postgres" \
+  -e DATA_SOURCE_USER="exporter" \
+  -e DATA_SOURCE_PASS_FILE="/run/secrets/db_password" \
+  quay.io/prometheuscommunity/postgres-exporter
+```
+
+### Kubernetes Secrets
+
+```bash
+# Create secret from file
+kubectl create secret generic postgres-exporter \
+  --from-file=password=/path/to/password-file
+
+# Mount as file in pod
+volumeMounts:
+  - name: secrets
+    mountPath: /run/secrets
+    readOnly: true
+volumes:
+  - name: secrets
+    secret:
+      secretName: postgres-exporter
+```
+
+## Troubleshooting
+
+### Check Current Environment
+
+```bash
+# View all PG_EXPORTER variables
+env | grep PG_EXPORTER
+
+# View data source configuration (be careful with passwords!)
+env | grep DATA_SOURCE
+```
+
+### Test Connection String
+
+```bash
+# Test with psql
+psql "$DATA_SOURCE_NAME"
+
+# Or construct from parts
+psql "postgresql://$DATA_SOURCE_USER:$DATA_SOURCE_PASS@$DATA_SOURCE_URI"
+```
+
+### Connection Issues
+
+If the exporter cannot connect:
+
+1. Verify the connection string works with `psql`
+2. Check network connectivity and firewall rules
+3. Verify PostgreSQL user permissions
+4. Check `pg_hba.conf` for authentication rules
+5. Ensure SSL/TLS settings match server requirements
+
+### Permission Errors
+
+```sql
+-- Grant necessary permissions
+GRANT pg_monitor TO postgres_exporter;
+
+-- Or for older PostgreSQL versions
+GRANT pg_read_all_stats TO postgres_exporter;
+```
+
+## See Also
+
+- [Command-Line Flags(../reference/command-line-flags) - Complete flag reference
+- [Configuration File(../reference/configuration-file) - YAML configuration reference
+- [Deployment Guides(../deployment/docker) - Deployment examples

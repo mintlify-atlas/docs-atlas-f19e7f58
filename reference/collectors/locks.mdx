@@ -1,0 +1,116 @@
+---
+title: locks
+description: Reference documentation for the locks collector
+---
+
+The `locks` collector exposes metrics about PostgreSQL locks held by database connections.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### pg_locks_count
+
+**Type:** Gauge  
+**Description:** Number of locks currently held
+
+**Labels:**
+- `datname` - Database name
+- `mode` - Lock mode (see below)
+
+## Lock Modes
+
+The collector tracks all PostgreSQL lock modes:
+
+- `accesssharelock` - Acquired by `SELECT` statements
+- `rowsharelock` - Acquired by `SELECT FOR UPDATE/SHARE`
+- `rowexclusivelock` - Acquired by `UPDATE`, `DELETE`, `INSERT`
+- `shareupdateexclusivelock` - Acquired by `VACUUM`, `CREATE INDEX CONCURRENTLY`
+- `sharelock` - Acquired by `CREATE INDEX`
+- `sharerowexclusivelock` - Acquired by `CREATE TRIGGER`
+- `exclusivelock` - Blocks concurrent `SELECT FOR UPDATE`
+- `accessexclusivelock` - Acquired by `DROP TABLE`, `TRUNCATE`, `VACUUM FULL`, `LOCK TABLE`
+- `sireadlock` - Used by serializable transactions
+
+## SQL Query
+
+```sql
+SELECT 
+  pg_database.datname as datname,
+  tmp.mode as mode,
+  COALESCE(count, 0) as count 
+FROM 
+  (
+    VALUES 
+      ('accesssharelock'), 
+      ('rowsharelock'), 
+      ('rowexclusivelock'), 
+      ('shareupdateexclusivelock'), 
+      ('sharelock'), 
+      ('sharerowexclusivelock'), 
+      ('exclusivelock'), 
+      ('accessexclusivelock'), 
+      ('sireadlock')
+  ) AS tmp(mode)
+  CROSS JOIN pg_database 
+  LEFT JOIN (
+    SELECT 
+      database, 
+      lower(mode) AS mode, 
+      count(*) AS count 
+    FROM 
+      pg_locks 
+    WHERE 
+      database IS NOT NULL 
+    GROUP BY 
+      database, 
+      lower(mode)
+  ) AS tmp2 ON tmp.mode = tmp2.mode 
+  and pg_database.oid = tmp2.database 
+ORDER BY 1
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_locks` view
+- Access to `pg_database` catalog
+
+## Example Output
+
+```
+pg_locks_count{datname="myapp",mode="accesssharelock"} 25
+pg_locks_count{datname="myapp",mode="rowexclusivelock"} 3
+pg_locks_count{datname="myapp",mode="accessexclusivelock"} 0
+```
+
+## Use Cases
+
+### Detecting Lock Contention
+
+High lock counts can indicate:
+- Long-running transactions
+- Lock contention and blocking queries
+- Connection pooling issues
+- DDL operations blocking queries
+
+### Monitoring Patterns
+
+```promql
+# High exclusive locks
+pg_locks_count{mode="accessexclusivelock"} > 5
+
+# Total locks per database
+sum by (datname) (pg_locks_count)
+```
+
+## Related
+
+- [pg_locks view](https://www.postgresql.org/docs/current/view-pg-locks.html)
+- [Lock modes documentation](https://www.postgresql.org/docs/current/explicit-locking.html)

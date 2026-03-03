@@ -1,0 +1,157 @@
+---
+title: Configuration Overview
+description: Learn how to configure the PostgreSQL Server Exporter
+---
+
+The PostgreSQL Server Exporter can be configured through multiple methods to suit different deployment scenarios.
+
+## Configuration Methods
+
+The exporter supports three primary configuration approaches:
+
+<CardGroup cols={3}>
+  <Card title="Environment Variables" icon="terminal" href="/configuration/environment-variables">
+    Configure using environment variables for containerized deployments
+  </Card>
+  <Card title="Command-Line Flags" icon="flag" href="/configuration/flags">
+    Use flags for traditional server deployments
+  </Card>
+  <Card title="Configuration File" icon="file" href="/configuration/auth-modules">
+    Define auth modules and multi-target support via YAML
+  </Card>
+</CardGroup>
+
+## Configuration File Location
+
+The exporter loads its configuration from a YAML file specified by the `--config.file` flag. The default location is `postgres_exporter.yml` in the current working directory.
+
+```bash
+postgres_exporter --config.file=/etc/postgres_exporter/config.yml
+```
+
+## Precedence Order
+
+When the same setting is configured in multiple places, the following precedence applies (highest to lowest):
+
+<Steps>
+  <Step title="Command-line flags">
+    Flags passed directly to the exporter have the highest priority
+  </Step>
+  <Step title="Environment variables">
+    Environment variables prefixed with `PG_EXPORTER_` override defaults
+  </Step>
+  <Step title="Configuration file">
+    Settings in the YAML configuration file
+  </Step>
+  <Step title="Default values">
+    Built-in defaults when no configuration is provided
+  </Step>
+</Steps>
+
+<Note>
+Environment variables starting with `PG_EXPORTER_` will be overwritten by the corresponding CLI flag if given.
+</Note>
+
+## Basic Configuration Example
+
+Here's a minimal configuration to get started:
+
+<Tabs>
+  <Tab title="Environment Variables">
+    ```bash
+    export DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable"
+    export DATA_SOURCE_USER="postgres"
+    export DATA_SOURCE_PASS="password"
+    export PG_EXPORTER_WEB_TELEMETRY_PATH="/metrics"
+    
+    ./postgres_exporter
+    ```
+  </Tab>
+  <Tab title="Command-Line Flags">
+    ```bash
+    ./postgres_exporter \
+      --web.listen-address=":9187" \
+      --web.telemetry-path="/metrics" \
+      --disable-default-metrics=false
+    ```
+  </Tab>
+  <Tab title="Docker">
+    ```bash
+    docker run \
+      --net=host \
+      -e DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable" \
+      -e DATA_SOURCE_USER=postgres \
+      -e DATA_SOURCE_PASS=password \
+      quay.io/prometheuscommunity/postgres-exporter
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration File Structure
+
+The YAML configuration file supports the following top-level sections:
+
+### auth_modules
+
+Defines authentication modules for multi-target monitoring. See [Authentication Modules](/configuration/auth-modules) for details.
+
+```yaml
+auth_modules:
+  prod_db:
+    type: userpass
+    userpass:
+      username: monitoring_user
+      password: secure_password
+    options:
+      sslmode: require
+      connect_timeout: "10"
+```
+
+## Quick Start Guides
+
+<CardGroup cols={2}>
+  <Card title="Data Source Configuration" icon="database" href="/configuration/data-source">
+    Configure database connection strings and DSN formats
+  </Card>
+  <Card title="Environment Variables" icon="list" href="/configuration/environment-variables">
+    Complete reference of all environment variables
+  </Card>
+</CardGroup>
+
+## Security Considerations
+
+<Warning>
+Never commit configuration files containing passwords to version control. Use file-based secrets or environment variables from a secure store.
+</Warning>
+
+### Using File-Based Secrets
+
+For enhanced security, store sensitive values in files:
+
+```bash
+echo "my_secure_password" > /run/secrets/db_password
+chmod 600 /run/secrets/db_password
+
+export DATA_SOURCE_PASS_FILE="/run/secrets/db_password"
+./postgres_exporter
+```
+
+The exporter supports `_FILE` variants for:
+- `DATA_SOURCE_USER_FILE`
+- `DATA_SOURCE_PASS_FILE`
+- `DATA_SOURCE_URI_FILE`
+
+<Note>
+When running in a container, the process runs with uid/gid 65534. Ensure file permissions allow this user to read secret files.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Data Source" icon="link" href="/configuration/data-source">
+    Set up your PostgreSQL connection
+  </Card>
+  <Card title="Explore Flags" icon="terminal" href="/configuration/flags">
+    Browse all available command-line options
+  </Card>
+</CardGroup>

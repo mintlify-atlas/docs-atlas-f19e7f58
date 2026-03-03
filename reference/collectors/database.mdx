@@ -1,0 +1,82 @@
+---
+title: database
+description: Reference documentation for the database collector
+---
+
+The `database` collector exposes metrics about PostgreSQL databases, including disk space usage and connection limits.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### pg_database_size_bytes
+
+**Type:** Gauge  
+**Description:** Disk space used by the database
+
+**Labels:**
+- `datname` - Database name
+
+**Source Query:**
+```sql
+SELECT pg_database_size($1)
+```
+
+### pg_database_connection_limit
+
+**Type:** Gauge  
+**Description:** Connection limit set for the database (-1 = unlimited)
+
+**Labels:**
+- `datname` - Database name
+
+## SQL Queries
+
+The collector executes two queries:
+
+1. **List databases:**
+```sql
+SELECT pg_database.datname, pg_database.datconnlimit 
+FROM pg_database;
+```
+
+2. **Get database size (per database):**
+```sql
+SELECT pg_database_size($1)
+```
+
+## Configuration
+
+### Exclude Databases
+
+You can exclude specific databases from collection using the `--exclude-databases` flag:
+
+```bash
+pgexporter --exclude-databases="postgres,template0,template1"
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+## Required Permissions
+
+The monitoring user needs:
+- `CONNECT` privilege on target databases
+- Access to `pg_database` system catalog
+- Execute permission on `pg_database_size()` function
+
+## Example Output
+
+```
+pg_database_size_bytes{datname="myapp"} 524288000
+pg_database_connection_limit{datname="myapp"} 100
+pg_database_connection_limit{datname="postgres"} -1
+```
+
+## Related
+
+- [pg_database documentation](https://www.postgresql.org/docs/current/catalog-pg-database.html)
+- [pg_database_size]() function](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-DBSIZE)

@@ -1,0 +1,198 @@
+---
+title: Custom Queries (Deprecated)
+description: Legacy feature for loading custom SQL queries from YAML files
+---
+
+<Warning>
+The custom queries feature is **deprecated** and will be removed in a future release. Use built-in collectors or migrate to [sql_exporter](https://github.com/burningalchemist/sql_exporter) for generic SQL database monitoring.
+</Warning>
+
+## Overview
+
+The custom queries feature allowed loading additional SQL queries from a YAML configuration file using the `--extend.query-path` flag. This provided a way to expose custom metrics not covered by built-in collectors.
+
+## Why It's Deprecated
+
+The PostgreSQL Server Exporter project has moved toward:
+
+1. **Built-in collectors** - More comprehensive coverage of PostgreSQL metrics
+2. **Better performance** - Native Go implementations are more efficient
+3. **Type safety** - Proper metric types and validation
+4. **Maintainability** - Less complex configuration
+5. **Specialization** - Use dedicated tools for custom SQL monitoring
+
+## Migration Path
+
+### Option 1: Use Built-in Collectors
+
+Review the available collectors to see if they cover your use case:
+
+- [Database](/collectors/database)
+- [Locks](/collectors/locks)
+- [Replication](/collectors/replication)
+- [Database Statistics](/collectors/stat-database)
+- [User Tables Statistics](/collectors/stat-user-tables)
+- [WAL](/collectors/wal)
+
+Many disabled-by-default collectors may provide the metrics you need:
+
+```bash
+# Enable additional collectors
+postgres_exporter \
+  --collector.stat_statements \
+  --collector.stat_progress_vacuum \
+  --collector.long_running_transactions
+```
+
+### Option 2: Use SQL Exporter
+
+For custom SQL queries, use the [sql_exporter](https://github.com/burningalchemist/sql_exporter):
+
+```yaml
+# sql_exporter configuration
+jobs:
+  - name: "postgres_custom"
+    interval: '5m'
+    connections:
+      - 'postgres://user:pass@localhost:5432/mydb'
+    queries:
+      - name: "custom_metric"
+        help: "My custom metric"
+        values:
+          - "metric_value"
+        query: |
+          SELECT count(*) as metric_value 
+          FROM my_custom_table 
+          WHERE condition = true;
+```
+
+### Option 3: Request a Built-in Collector
+
+If your use case is common, consider requesting a new built-in collector:
+
+1. Open an issue on [GitHub](https://github.com/prometheus-community/postgres_exporter)
+2. Describe the metrics you need
+3. Provide SQL queries and use cases
+4. The community may implement it as a native collector
+
+## Legacy Usage (Not Recommended)
+
+If you must use custom queries temporarily:
+
+```bash
+postgres_exporter --extend.query-path=/path/to/queries.yaml
+```
+
+### Example queries.yaml
+
+```yaml
+pg_custom:
+  query: "SELECT count(*) as count FROM my_table WHERE status = 'active'"
+  master: true
+  metrics:
+    - count:
+        usage: "GAUGE"
+        description: "Number of active records"
+
+pg_replication_status:
+  query: "SELECT client_addr, state, sync_state FROM pg_stat_replication"
+  master: true
+  metrics:
+    - client_addr:
+        usage: "LABEL"
+        description: "Client address"
+    - state:
+        usage: "LABEL"
+        description: "Replication state"
+    - sync_state:
+        usage: "LABEL"
+        description: "Synchronization state"
+```
+
+## Configuration Reference
+
+### Query Structure
+
+```yaml
+metric_name:
+  query: "SQL query string"
+  master: true|false  # Run only on primary?
+  metrics:
+    - column_name:
+        usage: "GAUGE|COUNTER|LABEL"
+        description: "Metric description"
+```
+
+### Usage Types
+
+- **GAUGE** - Value that can go up or down
+- **COUNTER** - Monotonically increasing value
+- **LABEL** - Used as a label on the metric
+- **DISCARD** - Column is ignored
+
+### Flags
+
+#### --extend.query-path
+
+Path to YAML file containing custom queries.
+
+```bash
+postgres_exporter --extend.query-path=/etc/postgres_exporter/queries.yaml
+```
+
+#### --disable-default-metrics
+
+Disable all built-in collectors and use only custom queries.
+
+```bash
+postgres_exporter \
+  --extend.query-path=/etc/postgres_exporter/queries.yaml \
+  --disable-default-metrics
+```
+
+<Warning>
+Using `--disable-default-metrics` removes all built-in collectors. This is only useful for non-standard PostgreSQL variants like Greenplum or very old PostgreSQL versions.
+</Warning>
+
+#### --dumpmaps
+
+Print the internal representation of metric maps for debugging:
+
+```bash
+postgres_exporter \
+  --extend.query-path=/etc/postgres_exporter/queries.yaml \
+  --dumpmaps
+```
+
+## Limitations
+
+- No dynamic label support
+- Limited error handling
+- Performance not optimized
+- No connection pooling
+- Queries block scrape until complete
+- No version-specific query support
+- Complex queries can timeout
+
+## Timeline
+
+The custom queries feature:
+
+- **Current**: Deprecated but still functional
+- **Future**: Will be removed in a major version update
+- **Recommendation**: Migrate to alternatives now
+
+## Getting Help
+
+If you need assistance migrating from custom queries:
+
+1. Review [built-in collector documentation](/collectors/overview)
+2. Check the [sql_exporter documentation](https://github.com/burningalchemist/sql_exporter)
+3. Ask in the [PostgreSQL Exporter discussions](https://github.com/prometheus-community/postgres_exporter/discussions)
+4. Open an issue for feature requests
+
+## Related Documentation
+
+- [Collectors Overview](/collectors/overview)
+- [Configuration Guide](/configuration)
+- [Best Practices

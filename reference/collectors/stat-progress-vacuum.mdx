@@ -1,0 +1,224 @@
+---
+title: stat-progress-vacuum
+description: Reference documentation for the stat-progress-vacuum collector
+---
+
+The `stat_progress_vacuum` collector provides real-time progress information for running vacuum operations.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### pg_stat_progress_vacuum_phase
+
+**Type:** Gauge  
+**Description:** Current vacuum phase (1 = active, 0 = inactive)
+
+**Labels:**
+- `datname` - Database name
+- `relname` - Table name being vacuumed
+- `phase` - Human-readable phase name
+
+**Phases:**
+- `initializing`
+- `scanning heap`
+- `vacuuming indexes`
+- `vacuuming heap`
+- `cleaning up indexes`
+- `truncating heap`
+- `performing final cleanup`
+
+### pg_stat_progress_vacuum_heap_blks
+
+**Type:** Gauge  
+**Description:** Total number of heap blocks in the table being vacuumed
+
+**Labels:** `datname`, `relname`
+
+### pg_stat_progress_vacuum_heap_blks_scanned
+
+**Type:** Gauge  
+**Description:** Number of heap blocks scanned so far
+
+**Labels:** `datname`, `relname`
+
+### pg_stat_progress_vacuum_heap_blks_vacuumed
+
+**Type:** Gauge  
+**Description:** Number of heap blocks vacuumed so far
+
+**Labels:** `datname`, `relname`
+
+### pg_stat_progress_vacuum_index_vacuums
+
+**Type:** Gauge  
+**Description:** Number of completed index vacuum cycles
+
+**Labels:** `datname`, `relname`
+
+### pg_stat_progress_vacuum_max_dead_tuples
+
+**Type:** Gauge  
+**Description:** Maximum number of dead tuples that can be stored before cleanup is performed
+
+**Labels:** `datname`, `relname`
+
+### pg_stat_progress_vacuum_num_dead_tuples
+
+**Type:** Gauge  
+**Description:** Current number of dead tuples found so far
+
+**Labels:** `datname`, `relname`
+
+## SQL Query
+
+```sql
+SELECT
+  d.datname,
+  s.relid::regclass::text AS relname,
+  s.param1 AS phase,
+  s.param2 AS heap_blks_total,
+  s.param3 AS heap_blks_scanned,
+  s.param4 AS heap_blks_vacuumed,
+  s.param5 AS index_vacuum_count,
+  s.param6 AS max_dead_tuples,
+  s.param7 AS num_dead_tuples
+FROM
+  pg_stat_get_progress_info('VACUUM'::text)
+  s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)
+LEFT JOIN
+  pg_database d ON s.datid = d.oid
+```
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 9.6+
+
+The `pg_stat_progress_vacuum` view was introduced in PostgreSQL 9.6.
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_stat_get_progress_info()` function
+- Access to `pg_database` catalog
+
+## Example Output
+
+```
+pg_stat_progress_vacuum_phase{datname="myapp",relname="users",phase="scanning heap"} 1
+pg_stat_progress_vacuum_phase{datname="myapp",relname="users",phase="initializing"} 0
+pg_stat_progress_vacuum_heap_blks{datname="myapp",relname="users"} 100000
+pg_stat_progress_vacuum_heap_blks_scanned{datname="myapp",relname="users"} 45000
+pg_stat_progress_vacuum_heap_blks_vacuumed{datname="myapp",relname="users"} 42000
+pg_stat_progress_vacuum_index_vacuums{datname="myapp",relname="users"} 0
+pg_stat_progress_vacuum_max_dead_tuples{datname="myapp",relname="users"} 11184810
+pg_stat_progress_vacuum_num_dead_tuples{datname="myapp",relname="users"} 8500000
+```
+
+## Use Cases
+
+### Monitor Vacuum Progress
+
+```promql
+# Percentage of heap scanned
+100 * pg_stat_progress_vacuum_heap_blks_scanned / 
+pg_stat_progress_vacuum_heap_blks
+
+# Percentage of dead tuples collected
+100 * pg_stat_progress_vacuum_num_dead_tuples / 
+pg_stat_progress_vacuum_max_dead_tuples
+```
+
+### Identify Current Phase
+
+```promql
+# Find tables in specific phases
+pg_stat_progress_vacuum_phase{phase="vacuuming indexes"} == 1
+```
+
+### Estimate Remaining Time
+
+Combine with vacuum start time to estimate completion:
+```promql
+# Blocks remaining
+pg_stat_progress_vacuum_heap_blks - pg_stat_progress_vacuum_heap_blks_scanned
+```
+
+## Vacuum Phases Explained
+
+1. **initializing** - Starting vacuum operation
+2. **scanning heap** - Scanning table pages for dead tuples
+3. **vacuuming indexes** - Removing index entries for dead tuples
+4. **vacuuming heap** - Removing dead tuples from table pages
+5. **cleaning up indexes** - Final index cleanup
+6. **truncating heap** - Returning empty pages at end of table to OS
+7. **performing final cleanup** - Final cleanup before completion
+
+## Index Vacuum Cycles
+
+The `index_vacuum_count` metric shows how many times indexes have been vacuumed. Multiple cycles occur when:
+- Table has many dead tuples
+- `maintenance_work_mem` is too small to hold all dead tuple identifiers
+- Multiple index vacuum passes are required
+
+## Dead Tuple Limits
+
+The `max_dead_tuples` value is determined by `maintenance_work_mem`:
+```
+max_dead_tuples = maintenance_work_mem / 6 bytes per tuple
+```
+
+When `num_dead_tuples` reaches `max_dead_tuples`, vacuum performs an index vacuum cycle.
+
+## Alert Examples
+
+```yaml
+- alert: VacuumStuck
+  expr: |
+    (pg_stat_progress_vacuum_heap_blks_scanned / 
+     pg_stat_progress_vacuum_heap_blks) < 0.1
+    and time() - pg_stat_activity_autovacuum_timestamp_seconds > 3600
+  annotations:
+    summary: "Vacuum appears stuck"
+    description: "Vacuum on {{ $labels.relname }} has made < 10% progress in 1 hour"
+
+- alert: ManyIndexVacuumCycles
+  expr: pg_stat_progress_vacuum_index_vacuums > 5
+  annotations:
+    summary: "Many index vacuum cycles"
+    description: "Consider increasing maintenance_work_mem for {{ $labels.relname }}"
+```
+
+## Troubleshooting
+
+### Check Vacuum Progress Directly
+
+```sql
+SELECT 
+  datname,
+  relid::regclass as table_name,
+  phase,
+  heap_blks_total,
+  heap_blks_scanned,
+  heap_blks_vacuumed,
+  index_vacuum_count,
+  max_dead_tuples,
+  num_dead_tuples,
+  round(100.0 * heap_blks_scanned / NULLIF(heap_blks_total, 0), 2) as pct_complete
+FROM pg_stat_progress_vacuum
+JOIN pg_database ON pg_stat_progress_vacuum.datid = pg_database.oid;
+```
+
+### Slow Vacuum Issues
+
+- **Many index vacuum cycles:** Increase `maintenance_work_mem`
+- **Stuck in scanning heap:** Check for concurrent long-running transactions
+- **Slow I/O:** Check `autovacuum_vacuum_cost_delay` and storage performance
+
+## Related
+
+- [pg_stat_progress_vacuum view](https://www.postgresql.org/docs/current/progress-reporting.html#VACUUM-PROGRESS-REPORTING)
+- [VACUUM command](https://www.postgresql.org/docs/current/sql-vacuum.html)
+- [stat-activity-autovacuum collector](/reference/collectors/stat-activity-autovacuum)

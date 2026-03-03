@@ -1,0 +1,260 @@
+---
+title: statio-user-tables
+description: Reference documentation for the statio-user-tables collector
+---
+
+The `statio_user_tables` collector exposes I/O statistics for user tables, tracking buffer cache performance for heap, index, and TOAST data.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### Heap I/O Metrics
+
+#### pg_statio_user_tables_heap_blocks_read
+
+**Type:** Counter  
+**Description:** Number of disk blocks read from this table's heap
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_statio_user_tables_heap_blocks_hit
+
+**Type:** Counter  
+**Description:** Number of buffer hits in this table's heap
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+### Index I/O Metrics
+
+#### pg_statio_user_tables_idx_blocks_read
+
+**Type:** Counter  
+**Description:** Number of disk blocks read from all indexes on this table
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_statio_user_tables_idx_blocks_hit
+
+**Type:** Counter  
+**Description:** Number of buffer hits in all indexes on this table
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+### TOAST I/O Metrics
+
+#### pg_statio_user_tables_toast_blocks_read
+
+**Type:** Counter  
+**Description:** Number of disk blocks read from this table's TOAST table (if any)
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_statio_user_tables_toast_blocks_hit
+
+**Type:** Counter  
+**Description:** Number of buffer hits in this table's TOAST table (if any)
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+### TOAST Index I/O Metrics
+
+#### pg_statio_user_tables_tidx_blocks_read
+
+**Type:** Counter  
+**Description:** Number of disk blocks read from this table's TOAST table indexes (if any)
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_statio_user_tables_tidx_blocks_hit
+
+**Type:** Counter  
+**Description:** Number of buffer hits in this table's TOAST table indexes (if any)
+
+**Labels:** `datname`, `schemaname`, `relname`
+
+## SQL Query
+
+```sql
+SELECT
+  current_database() datname,
+  schemaname,
+  relname,
+  heap_blks_read,
+  heap_blks_hit,
+  idx_blks_read,
+  idx_blks_hit,
+  toast_blks_read,
+  toast_blks_hit,
+  tidx_blks_read,
+  tidx_blks_hit
+FROM pg_statio_user_tables
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_statio_user_tables` view (granted to `PUBLIC` by default)
+
+## Example Output
+
+```
+pg_statio_user_tables_heap_blocks_read{datname="myapp",schemaname="public",relname="users"} 15234
+pg_statio_user_tables_heap_blocks_hit{datname="myapp",schemaname="public",relname="users"} 1250000
+pg_statio_user_tables_idx_blocks_read{datname="myapp",schemaname="public",relname="users"} 4521
+pg_statio_user_tables_idx_blocks_hit{datname="myapp",schemaname="public",relname="users"} 890000
+pg_statio_user_tables_toast_blocks_read{datname="myapp",schemaname="public",relname="users"} 120
+pg_statio_user_tables_toast_blocks_hit{datname="myapp",schemaname="public",relname="users"} 5600
+```
+
+## Use Cases
+
+### Table Cache Hit Ratio
+
+```promql
+# Heap cache hit ratio per table
+sum by (relname) (rate(pg_statio_user_tables_heap_blocks_hit[5m])) /
+(
+  sum by (relname) (rate(pg_statio_user_tables_heap_blocks_hit[5m])) +
+  sum by (relname) (rate(pg_statio_user_tables_heap_blocks_read[5m]))
+)
+
+# Overall cache hit ratio (all tables)
+sum(rate(pg_statio_user_tables_heap_blocks_hit[5m])) /
+(
+  sum(rate(pg_statio_user_tables_heap_blocks_hit[5m])) +
+  sum(rate(pg_statio_user_tables_heap_blocks_read[5m]))
+)
+```
+
+### Index vs Heap I/O
+
+```promql
+# Ratio of index to heap I/O
+(
+  rate(pg_statio_user_tables_idx_blocks_read[5m]) +
+  rate(pg_statio_user_tables_idx_blocks_hit[5m])
+) /
+(
+  rate(pg_statio_user_tables_heap_blocks_read[5m]) +
+  rate(pg_statio_user_tables_heap_blocks_hit[5m])
+)
+```
+
+High ratio indicates good index usage; low ratio may indicate sequential scans.
+
+### TOAST Table Activity
+
+```promql
+# Tables with TOAST activity
+rate(pg_statio_user_tables_toast_blocks_read[5m]) +
+rate(pg_statio_user_tables_toast_blocks_hit[5m]) > 0
+```
+
+TOAST activity indicates large column values (> 2KB).
+
+### Disk-Intensive Tables
+
+```promql
+# Tables reading most from disk
+topk(10, 
+  rate(pg_statio_user_tables_heap_blocks_read[5m]) +
+  rate(pg_statio_user_tables_idx_blocks_read[5m])
+)
+```
+
+## Performance Tuning
+
+### Low Cache Hit Ratio (< 90%)
+
+If a table has low cache hit ratio:
+
+1. **Increase shared_buffers:**
+   ```sql
+   ALTER SYSTEM SET shared_buffers = '4GB';
+   ```
+
+2. **Check table size vs cache:**
+   ```sql
+   SELECT 
+     relname,
+     pg_size_pretty(pg_table_size(relid)) as table_size,
+     pg_size_pretty(current_setting('shared_buffers')::bigint) as cache_size
+   FROM pg_stat_user_tables;
+   ```
+
+3. **Optimize queries:**
+   - Reduce sequential scans with indexes
+   - Use index-only scans where possible
+   - Partition large tables
+
+### High TOAST I/O
+
+If TOAST blocks are frequently accessed:
+- Consider `TOAST` storage strategy:
+  ```sql
+  ALTER TABLE users ALTER COLUMN bio SET STORAGE EXTERNAL;
+  ```
+- Compress large columns
+- Move large columns to separate tables
+
+### Combined I/O Metrics
+
+```promql
+# Total I/O per table (heap + indexes + TOAST)
+sum by (relname) (
+  rate(pg_statio_user_tables_heap_blocks_read[5m]) +
+  rate(pg_statio_user_tables_idx_blocks_read[5m]) +
+  rate(pg_statio_user_tables_toast_blocks_read[5m]) +
+  rate(pg_statio_user_tables_tidx_blocks_read[5m])
+)
+```
+
+## Alert Examples
+
+```yaml
+- alert: LowTableCacheHitRatio
+  expr: |
+    (
+      sum by (relname) (rate(pg_statio_user_tables_heap_blocks_hit[5m])) /
+      (
+        sum by (relname) (rate(pg_statio_user_tables_heap_blocks_hit[5m])) +
+        sum by (relname) (rate(pg_statio_user_tables_heap_blocks_read[5m]))
+      )
+    ) < 0.90
+  for: 10m
+  annotations:
+    summary: "Low cache hit ratio for table"
+    description: "Table {{ $labels.relname }} has {{ $value }}% cache hit ratio"
+
+- alert: HighDiskIO
+  expr: |
+    sum by (relname) (
+      rate(pg_statio_user_tables_heap_blocks_read[5m]) +
+      rate(pg_statio_user_tables_idx_blocks_read[5m])
+    ) > 1000
+  annotations:
+    summary: "High disk I/O on table"
+    description: "Table {{ $labels.relname }} reading {{ $value }} blocks/sec from disk"
+```
+
+## Understanding TOAST
+
+TOAST (The Oversized-Attribute Storage Technique) stores large column values out-of-line:
+
+- Automatically used for columns > ~2KB
+- Has its own table and indexes
+- Can impact performance if frequently accessed
+- Monitor with `toast_blocks_*` metrics
+
+## Related
+
+- [pg_statio_user_tables view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STATIO-ALL-TABLES-VIEW)
+- [TOAST documentation](https://www.postgresql.org/docs/current/storage-toast.html)
+- [stat-user-tables collector](/reference/collectors/stat-user-tables)

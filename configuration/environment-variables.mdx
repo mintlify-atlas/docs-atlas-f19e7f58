@@ -1,0 +1,336 @@
+---
+title: Environment Variables
+description: Complete reference for PostgreSQL Server Exporter environment variables
+---
+
+The PostgreSQL Server Exporter can be configured using environment variables, which is especially useful for containerized deployments.
+
+<Info>
+Environment variables starting with `PG_EXPORTER_` will be overwritten by the corresponding CLI flag if given.
+</Info>
+
+## Data Source Variables
+
+These variables configure the PostgreSQL connection. See [Data Source Configuration](/configuration/data-source) for detailed examples.
+
+<ParamField path="DATA_SOURCE_NAME" type="string">
+  Complete connection string including credentials. Supports both URI format (`postgresql://user:pass@host/db`) and key=value format (`host=localhost user=postgres`). Takes precedence over all other data source variables.
+  
+  **Example**: `postgresql://postgres:password@localhost:5432/postgres?sslmode=disable`
+</ParamField>
+
+<ParamField path="DATA_SOURCE_URI" type="string">
+  Database hostname and connection parameters without credentials. Format: `hostname:port/database?options`
+  
+  **Example**: `localhost:5432/postgres?sslmode=disable`
+</ParamField>
+
+<ParamField path="DATA_SOURCE_URI_FILE" type="string">
+  Path to a file containing the DATA_SOURCE_URI value. Whitespace is trimmed.
+  
+  **Example**: `/run/secrets/db_uri`
+</ParamField>
+
+<ParamField path="DATA_SOURCE_USER" type="string">
+  Database username. Used with DATA_SOURCE_URI to construct the full connection string.
+  
+  **Example**: `postgres_exporter`
+</ParamField>
+
+<ParamField path="DATA_SOURCE_USER_FILE" type="string">
+  Path to a file containing the username. Whitespace is trimmed. Takes precedence over DATA_SOURCE_USER.
+  
+  **Example**: `/run/secrets/db_user`
+</ParamField>
+
+<ParamField path="DATA_SOURCE_PASS" type="string">
+  Database password. Used with DATA_SOURCE_URI to construct the full connection string.
+  
+  **Example**: `secure_password`
+</ParamField>
+
+<ParamField path="DATA_SOURCE_PASS_FILE" type="string">
+  Path to a file containing the password. Whitespace is trimmed. Takes precedence over DATA_SOURCE_PASS. Recommended for security.
+  
+  **Example**: `/run/secrets/db_password`
+</ParamField>
+
+## Exporter Behavior Variables
+
+These variables control how the exporter operates and what metrics it collects.
+
+<ParamField path="PG_EXPORTER_WEB_TELEMETRY_PATH" type="string" default="/metrics">
+  HTTP path where metrics are exposed.
+  
+  **CLI Flag**: `--web.telemetry-path`
+</ParamField>
+
+<ParamField path="PG_EXPORTER_DISABLE_DEFAULT_METRICS" type="boolean" default="false">
+  When `true`, only metrics from custom queries are exported (requires `PG_EXPORTER_EXTEND_QUERY_PATH`). Built-in collector metrics are disabled.
+  
+  **CLI Flag**: `--disable-default-metrics`
+  
+  **Values**: `true`, `false`
+</ParamField>
+
+<ParamField path="PG_EXPORTER_DISABLE_SETTINGS_METRICS" type="boolean" default="false">
+  When `true`, disables scraping of `pg_settings` metrics.
+  
+  **CLI Flag**: `--disable-settings-metrics`
+  
+  **Values**: `true`, `false`
+</ParamField>
+
+<ParamField path="PG_EXPORTER_COLLECTION_TIMEOUT" type="duration" default="1m">
+  Timeout for collecting statistics from PostgreSQL. When reached, the database connection is dropped to prevent connection pool exhaustion. Must be greater than 1ms.
+  
+  **CLI Flag**: `--collection-timeout`
+  
+  **Example**: `30s`, `2m`, `500ms`
+</ParamField>
+
+<ParamField path="PG_EXPORTER_METRIC_PREFIX" type="string" default="pg">
+  Prefix for all exported metrics. Change this to avoid metric name conflicts.
+  
+  **CLI Flag**: `--metric-prefix`
+  
+  **Example**: `postgres`, `pgsql`
+</ParamField>
+
+## Deprecated Variables
+
+<Warning>
+The following variables are deprecated and will be removed in a future release.
+</Warning>
+
+<ParamField path="PG_EXPORTER_AUTO_DISCOVER_DATABASES" type="boolean" default="false">
+  **DEPRECATED**: Automatically discover and monitor all databases on the server.
+  
+  **CLI Flag**: `--auto-discover-databases`
+  
+  **Deprecation Note**: Use service discovery in Prometheus instead of database auto-discovery in the exporter.
+</ParamField>
+
+<ParamField path="PG_EXPORTER_EXCLUDE_DATABASES" type="string" default="">
+  **DEPRECATED**: Comma-separated list of database names to exclude when `PG_EXPORTER_AUTO_DISCOVER_DATABASES` is enabled.
+  
+  **CLI Flag**: `--exclude-databases`
+  
+  **Example**: `template0,template1,postgres`
+</ParamField>
+
+<ParamField path="PG_EXPORTER_INCLUDE_DATABASES" type="string" default="">
+  **DEPRECATED**: Comma-separated list of database names to exclusively include when `PG_EXPORTER_AUTO_DISCOVER_DATABASES` is enabled. Empty means all (minus excludes).
+  
+  **CLI Flag**: `--include-databases`
+  
+  **Example**: `app_db,analytics_db`
+</ParamField>
+
+<ParamField path="PG_EXPORTER_EXTEND_QUERY_PATH" type="string" default="">
+  **DEPRECATED**: Path to YAML file with custom queries. Use built-in collectors instead, or see [sql_exporter](https://github.com/burningalchemist/sql_exporter) for generic SQL monitoring.
+  
+  **CLI Flag**: `--extend.query-path`
+  
+  **Example**: `/etc/postgres_exporter/queries.yaml`
+</ParamField>
+
+<ParamField path="PG_EXPORTER_CONSTANT_LABELS" type="string" default="">
+  **DEPRECATED**: Comma-separated list of label=value pairs to add to all metrics.
+  
+  **CLI Flag**: `--constantLabels`
+  
+  **Example**: `environment=production,region=us-east-1`
+</ParamField>
+
+## Configuration Examples
+
+<Tabs>
+  <Tab title="Docker Compose">
+    ```yaml docker-compose.yml
+    version: '3.8'
+    services:
+      postgres-exporter:
+        image: quay.io/prometheuscommunity/postgres-exporter:latest
+        environment:
+          DATA_SOURCE_URI: "postgres:5432/mydb?sslmode=disable"
+          DATA_SOURCE_USER: "postgres_exporter"
+          DATA_SOURCE_PASS: "secure_password"
+          PG_EXPORTER_WEB_TELEMETRY_PATH: "/metrics"
+          PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+          PG_EXPORTER_METRIC_PREFIX: "pg"
+        ports:
+          - "9187:9187"
+        networks:
+          - monitoring
+      
+      postgres:
+        image: postgres:16
+        environment:
+          POSTGRES_PASSWORD: secure_password
+          POSTGRES_DB: mydb
+        networks:
+          - monitoring
+    
+    networks:
+      monitoring:
+    ```
+  </Tab>
+  <Tab title="Kubernetes">
+    ```yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: postgres-exporter-config
+    data:
+      DATA_SOURCE_URI: "postgres.default.svc.cluster.local:5432/postgres?sslmode=require"
+      PG_EXPORTER_COLLECTION_TIMEOUT: "30s"
+      PG_EXPORTER_METRIC_PREFIX: "pg"
+    ---
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: postgres-exporter-secret
+    type: Opaque
+    stringData:
+      username: postgres_exporter
+      password: secure_password
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: postgres-exporter
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: postgres-exporter
+      template:
+        metadata:
+          labels:
+            app: postgres-exporter
+        spec:
+          containers:
+          - name: postgres-exporter
+            image: quay.io/prometheuscommunity/postgres-exporter:latest
+            ports:
+            - containerPort: 9187
+              name: metrics
+            env:
+            - name: DATA_SOURCE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-exporter-secret
+                  key: username
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-exporter-secret
+                  key: password
+            envFrom:
+            - configMapRef:
+                name: postgres-exporter-config
+    ```
+  </Tab>
+  <Tab title="systemd">
+    ```ini /etc/systemd/system/postgres-exporter.service
+    [Unit]
+    Description=PostgreSQL Prometheus Exporter
+    After=network.target postgresql.service
+    
+    [Service]
+    Type=simple
+    User=postgres_exporter
+    Group=postgres_exporter
+    
+    Environment="DATA_SOURCE_URI=localhost:5432/postgres?sslmode=disable"
+    Environment="DATA_SOURCE_USER_FILE=/etc/postgres_exporter/secrets/user"
+    Environment="DATA_SOURCE_PASS_FILE=/etc/postgres_exporter/secrets/password"
+    Environment="PG_EXPORTER_WEB_TELEMETRY_PATH=/metrics"
+    Environment="PG_EXPORTER_COLLECTION_TIMEOUT=1m"
+    
+    ExecStart=/usr/local/bin/postgres_exporter
+    Restart=always
+    RestartSec=10
+    
+    [Install]
+    WantedBy=multi-user.target
+    ```
+    
+    Create the secret files:
+    ```bash
+    sudo mkdir -p /etc/postgres_exporter/secrets
+    echo "postgres_exporter" | sudo tee /etc/postgres_exporter/secrets/user
+    echo "secure_password" | sudo tee /etc/postgres_exporter/secrets/password
+    sudo chmod 600 /etc/postgres_exporter/secrets/*
+    sudo chown postgres_exporter:postgres_exporter /etc/postgres_exporter/secrets/*
+    ```
+  </Tab>
+  <Tab title="Shell Script">
+    ```bash run_exporter.sh
+    #!/bin/bash
+    
+    # Data source configuration
+    export DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable"
+    export DATA_SOURCE_USER="postgres_exporter"
+    export DATA_SOURCE_PASS="secure_password"
+    
+    # Or use file-based secrets
+    # export DATA_SOURCE_USER_FILE="/run/secrets/db_user"
+    # export DATA_SOURCE_PASS_FILE="/run/secrets/db_password"
+    
+    # Exporter configuration
+    export PG_EXPORTER_WEB_TELEMETRY_PATH="/metrics"
+    export PG_EXPORTER_DISABLE_DEFAULT_METRICS="false"
+    export PG_EXPORTER_DISABLE_SETTINGS_METRICS="false"
+    export PG_EXPORTER_COLLECTION_TIMEOUT="1m"
+    export PG_EXPORTER_METRIC_PREFIX="pg"
+    
+    # Start the exporter
+    exec ./postgres_exporter \
+      --web.listen-address=":9187" \
+      --log.level=info
+    ```
+  </Tab>
+</Tabs>
+
+## Precedence with CLI Flags
+
+When both environment variables and CLI flags are set:
+
+```bash
+# Environment variable sets base value
+export PG_EXPORTER_WEB_TELEMETRY_PATH="/metrics"
+
+# CLI flag overrides it
+./postgres_exporter --web.telemetry-path="/custom/metrics"
+
+# Result: metrics served at /custom/metrics
+```
+
+<Note>
+CLI flags always take precedence over environment variables.
+</Note>
+
+## Validation
+
+Verify your environment variables are set correctly:
+
+```bash
+# Show all PG_EXPORTER variables
+env | grep PG_EXPORTER
+
+# Check DATA_SOURCE variables (careful with passwords!)
+env | grep DATA_SOURCE | grep -v PASS
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Command-Line Flags" icon="flag" href="/configuration/flags">
+    Explore CLI flags that override environment variables
+  </Card>
+  <Card title="Data Source Configuration" icon="database" href="/configuration/data-source">
+    Deep dive into connection string formats
+  </Card>
+</CardGroup>

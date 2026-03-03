@@ -1,0 +1,425 @@
+---
+title: Command-Line Flags
+description: Complete reference for PostgreSQL Server Exporter command-line flags
+---
+
+The PostgreSQL Server Exporter accepts various command-line flags to control its behavior. Flags take precedence over environment variables.
+
+## Usage
+
+```bash
+postgres_exporter [flags]
+```
+
+View all available flags:
+```bash
+postgres_exporter --help
+```
+
+## General Flags
+
+<ParamField path="--help" type="flag">
+  Show context-sensitive help. Also try `--help-long` and `--help-man` for detailed documentation.
+  
+  **Short**: `-h`
+</ParamField>
+
+<ParamField path="--version" type="flag">
+  Show application version and build information.
+</ParamField>
+
+<ParamField path="--dumpmaps" type="flag">
+  Print the internal representation of metric maps and exit. Useful for debugging custom queries. Does not start the exporter.
+</ParamField>
+
+## Configuration File
+
+<ParamField path="--config.file" type="string" default="postgres_exporter.yml">
+  Path to the YAML configuration file containing auth modules and other settings.
+  
+  **Example**: `--config.file=/etc/postgres_exporter/config.yml`
+</ParamField>
+
+## Web Server Flags
+
+<ParamField path="--web.listen-address" type="string" default=":9187">
+  Address and port to listen on for HTTP requests. Format: `host:port` or `:port`
+  
+  **Examples**:
+  - `--web.listen-address=":9187"` - Listen on all interfaces, port 9187
+  - `--web.listen-address="127.0.0.1:9187"` - Listen only on localhost
+  - `--web.listen-address="0.0.0.0:8080"` - Listen on all interfaces, port 8080
+</ParamField>
+
+<ParamField path="--web.telemetry-path" type="string" default="/metrics">
+  HTTP path where metrics are exposed.
+  
+  **Environment Variable**: `PG_EXPORTER_WEB_TELEMETRY_PATH`
+  
+  **Example**: `--web.telemetry-path="/custom/metrics"`
+</ParamField>
+
+<ParamField path="--web.config.file" type="string">
+  Path to configuration file for TLS and/or basic authentication. See [exporter-toolkit documentation](https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md) for format details.
+  
+  **Example**: `--web.config.file=/etc/postgres_exporter/web-config.yml`
+</ParamField>
+
+<ParamField path="--web.systemd-socket" type="boolean" default="false">
+  Use systemd socket activation listeners instead of port listeners. Linux only.
+  
+  **Example**: `--web.systemd-socket`
+</ParamField>
+
+## Metrics Collection Flags
+
+<ParamField path="--disable-default-metrics" type="boolean" default="false">
+  Disable all built-in metrics. When enabled, only metrics from `--extend.query-path` are exported. Useful for monitoring non-standard PostgreSQL variants.
+  
+  **Environment Variable**: `PG_EXPORTER_DISABLE_DEFAULT_METRICS`
+  
+  **Example**: `--disable-default-metrics`
+</ParamField>
+
+<ParamField path="--disable-settings-metrics" type="boolean" default="false">
+  Disable scraping of `pg_settings` metrics.
+  
+  **Environment Variable**: `PG_EXPORTER_DISABLE_SETTINGS_METRICS`
+  
+  **Example**: `--disable-settings-metrics`
+</ParamField>
+
+<ParamField path="--metric-prefix" type="string" default="pg">
+  Prefix for all exported metrics. Change to avoid conflicts when running multiple exporters.
+  
+  **Environment Variable**: `PG_EXPORTER_METRIC_PREFIX`
+  
+  **Example**: `--metric-prefix=postgres`
+  
+  Results in metrics like `postgres_up`, `postgres_stat_database_*`, etc.
+</ParamField>
+
+<ParamField path="--collection-timeout" type="duration" default="1m">
+  Timeout for collecting statistics from PostgreSQL. Prevents connection pool exhaustion when queries are slow. Must be > 1ms.
+  
+  **Environment Variable**: `PG_EXPORTER_COLLECTION_TIMEOUT`
+  
+  **Examples**: `30s`, `2m`, `500ms`
+</ParamField>
+
+## Collector Flags
+
+Collectors can be individually enabled or disabled. Use `[no-]` prefix to explicitly disable.
+
+### Database Collectors
+
+<ParamField path="--[no-]collector.database" type="boolean" default="enabled">
+  Enable the database collector. Exports `pg_database` metrics including database size and statistics.
+</ParamField>
+
+<ParamField path="--[no-]collector.database_wraparound" type="boolean" default="disabled">
+  Enable the database wraparound collector. Monitors transaction ID wraparound risk.
+</ParamField>
+
+### Lock Collectors
+
+<ParamField path="--[no-]collector.locks" type="boolean" default="enabled">
+  Enable the locks collector. Exports lock wait statistics.
+</ParamField>
+
+### Transaction Collectors
+
+<ParamField path="--[no-]collector.long_running_transactions" type="boolean" default="disabled">
+  Enable the long running transactions collector. Identifies transactions exceeding a threshold.
+</ParamField>
+
+### Process Collectors
+
+<ParamField path="--[no-]collector.postmaster" type="boolean" default="disabled">
+  Enable the postmaster collector. Exports postmaster process information.
+</ParamField>
+
+<ParamField path="--[no-]collector.process_idle" type="boolean" default="disabled">
+  Enable the process idle collector. Monitors idle connections.
+</ParamField>
+
+### Replication Collectors
+
+<ParamField path="--[no-]collector.replication" type="boolean" default="enabled">
+  Enable the replication collector. Monitors streaming replication status.
+</ParamField>
+
+<ParamField path="--[no-]collector.replication_slot" type="boolean" default="enabled">
+  Enable the replication slot collector. Monitors replication slot lag.
+</ParamField>
+
+### Statistics Collectors
+
+<ParamField path="--[no-]collector.stat_activity_autovacuum" type="boolean" default="disabled">
+  Enable the stat activity autovacuum collector. Monitors autovacuum processes.
+</ParamField>
+
+<ParamField path="--[no-]collector.stat_bgwriter" type="boolean" default="enabled">
+  Enable the stat bgwriter collector. Exports background writer statistics.
+</ParamField>
+
+<ParamField path="--[no-]collector.stat_checkpointer" type="boolean" default="disabled">
+  Enable the stat checkpointer collector (PostgreSQL 17+). Exports checkpoint statistics.
+</ParamField>
+
+<ParamField path="--[no-]collector.stat_database" type="boolean" default="enabled">
+  Enable the stat database collector. Exports `pg_stat_database` metrics.
+</ParamField>
+
+<ParamField path="--[no-]collector.stat_progress_vacuum" type="boolean" default="enabled">
+  Enable the stat progress vacuum collector. Monitors vacuum progress.
+</ParamField>
+
+<ParamField path="--[no-]collector.stat_user_tables" type="boolean" default="enabled">
+  Enable the stat user tables collector. Exports `pg_stat_user_tables` metrics.
+</ParamField>
+
+<ParamField path="--[no-]collector.stat_wal_receiver" type="boolean" default="disabled">
+  Enable the stat WAL receiver collector. Monitors WAL receiver on replicas.
+</ParamField>
+
+<ParamField path="--[no-]collector.statio_user_indexes" type="boolean" default="disabled">
+  Enable the statio user indexes collector. Exports I/O statistics for indexes.
+</ParamField>
+
+<ParamField path="--[no-]collector.statio_user_tables" type="boolean" default="enabled">
+  Enable the statio user tables collector. Exports I/O statistics for tables.
+</ParamField>
+
+### WAL Collectors
+
+<ParamField path="--[no-]collector.wal" type="boolean" default="enabled">
+  Enable the WAL collector. Monitors write-ahead log statistics.
+</ParamField>
+
+<ParamField path="--[no-]collector.xlog_location" type="boolean" default="disabled">
+  Enable the xlog location collector (older PostgreSQL versions). Monitors WAL position.
+</ParamField>
+
+### pg_stat_statements Collector
+
+<ParamField path="--[no-]collector.stat_statements" type="boolean" default="disabled">
+  Enable the stat statements collector. Requires `pg_stat_statements` extension. Exports query execution statistics.
+</ParamField>
+
+<ParamField path="--[no-]collector.stat_statements.include_query" type="boolean" default="disabled">
+  Include the full query text with queryid in `pg_stat_statements` metrics.
+  
+  <Warning>
+  May expose sensitive data in metrics. Use with caution.
+  </Warning>
+</ParamField>
+
+<ParamField path="--collector.stat_statements.query_length" type="integer" default="120">
+  Maximum length of statement text to include in metrics (when `include_query` is enabled).
+  
+  **Example**: `--collector.stat_statements.query_length=200`
+</ParamField>
+
+<ParamField path="--collector.stat_statements.limit" type="integer" default="100">
+  Maximum number of statements to return from `pg_stat_statements`.
+  
+  **Example**: `--collector.stat_statements.limit=500`
+</ParamField>
+
+<ParamField path="--collector.stat_statements.exclude_databases" type="string">
+  Comma-separated list of database names to exclude from `pg_stat_statements` metrics.
+  
+  **Example**: `--collector.stat_statements.exclude_databases=template0,template1`
+</ParamField>
+
+<ParamField path="--collector.stat_statements.exclude_users" type="string">
+  Comma-separated list of user names to exclude from `pg_stat_statements` metrics.
+  
+  **Example**: `--collector.stat_statements.exclude_users=postgres,admin`
+</ParamField>
+
+## Deprecated Flags
+
+<Warning>
+The following flags are deprecated and will be removed in a future release.
+</Warning>
+
+<ParamField path="--auto-discover-databases" type="boolean" default="false">
+  **DEPRECATED**: Automatically discover and monitor all databases on the server.
+  
+  **Environment Variable**: `PG_EXPORTER_AUTO_DISCOVER_DATABASES`
+  
+  **Replacement**: Use Prometheus service discovery instead
+</ParamField>
+
+<ParamField path="--exclude-databases" type="string" default="">
+  **DEPRECATED**: Comma-separated list of databases to exclude when `--auto-discover-databases` is enabled.
+  
+  **Environment Variable**: `PG_EXPORTER_EXCLUDE_DATABASES`
+</ParamField>
+
+<ParamField path="--include-databases" type="string" default="">
+  **DEPRECATED**: Comma-separated list of databases to exclusively monitor when `--auto-discover-databases` is enabled.
+  
+  **Environment Variable**: `PG_EXPORTER_INCLUDE_DATABASES`
+</ParamField>
+
+<ParamField path="--extend.query-path" type="string" default="">
+  **DEPRECATED**: Path to YAML file containing custom queries.
+  
+  **Environment Variable**: `PG_EXPORTER_EXTEND_QUERY_PATH`
+  
+  **Replacement**: Use built-in collectors or [sql_exporter](https://github.com/burningalchemist/sql_exporter)
+</ParamField>
+
+<ParamField path="--constantLabels" type="string" default="">
+  **DEPRECATED**: Comma-separated list of `label=value` pairs to add to all metrics.
+  
+  **Environment Variable**: `PG_EXPORTER_CONSTANT_LABELS`
+  
+  **Example**: `--constantLabels=environment=prod,region=us-east`
+</ParamField>
+
+## Logging Flags
+
+<ParamField path="--log.level" type="string" default="info">
+  Set logging verbosity level.
+  
+  **Options**: `debug`, `info`, `warn`, `error`
+  
+  **Example**: `--log.level=debug`
+</ParamField>
+
+<ParamField path="--log.format" type="string" default="logfmt">
+  Set the log output format.
+  
+  **Options**: `logfmt`, `json`
+  
+  **Example**: `--log.format=json`
+</ParamField>
+
+## Configuration Examples
+
+<Tabs>
+  <Tab title="Basic Monitoring">
+    ```bash
+    postgres_exporter \
+      --web.listen-address=":9187" \
+      --web.telemetry-path="/metrics" \
+      --log.level=info
+    ```
+  </Tab>
+  <Tab title="Minimal Collectors">
+    ```bash
+    # Enable only essential collectors
+    postgres_exporter \
+      --collector.database \
+      --collector.stat_database \
+      --no-collector.locks \
+      --no-collector.replication \
+      --no-collector.replication_slot \
+      --no-collector.stat_bgwriter \
+      --no-collector.stat_user_tables \
+      --no-collector.statio_user_tables \
+      --no-collector.wal
+    ```
+  </Tab>
+  <Tab title="Query Performance">
+    ```bash
+    # Monitor query performance with pg_stat_statements
+    postgres_exporter \
+      --collector.stat_statements \
+      --collector.stat_statements.limit=500 \
+      --collector.stat_statements.query_length=200 \
+      --collector.stat_statements.exclude_databases=template0,template1
+    ```
+  </Tab>
+  <Tab title="Replication Monitoring">
+    ```bash
+    # Focus on replication health
+    postgres_exporter \
+      --collector.replication \
+      --collector.replication_slot \
+      --collector.stat_wal_receiver \
+      --collector.wal \
+      --collection-timeout=30s
+    ```
+  </Tab>
+  <Tab title="Security Hardened">
+    ```bash
+    # With TLS and basic auth
+    postgres_exporter \
+      --web.listen-address=":9187" \
+      --web.config.file=/etc/postgres_exporter/web-config.yml \
+      --config.file=/etc/postgres_exporter/config.yml \
+      --log.level=warn \
+      --log.format=json
+    ```
+    
+    web-config.yml:
+    ```yaml
+    tls_server_config:
+      cert_file: /etc/certs/server.crt
+      key_file: /etc/certs/server.key
+    basic_auth_users:
+      prometheus: $2y$10$...
+    ```
+  </Tab>
+  <Tab title="Custom Prefix">
+    ```bash
+    # Avoid conflicts with custom prefix
+    postgres_exporter \
+      --metric-prefix=pgsql \
+      --web.telemetry-path="/postgres-metrics"
+    
+    # Metrics will be named:
+    # pgsql_up
+    # pgsql_stat_database_*
+    # etc.
+    ```
+  </Tab>
+</Tabs>
+
+## Combining with Environment Variables
+
+Flags override environment variables:
+
+```bash
+# Set defaults via environment
+export PG_EXPORTER_WEB_TELEMETRY_PATH="/metrics"
+export PG_EXPORTER_DISABLE_SETTINGS_METRICS="true"
+
+# Override with flags
+postgres_exporter \
+  --web.telemetry-path="/custom" \
+  --disable-settings-metrics=false
+
+# Result: /custom endpoint with settings metrics enabled
+```
+
+## Checking Current Configuration
+
+View the active configuration by checking the landing page:
+
+```bash
+curl http://localhost:9187/
+```
+
+Or inspect logs on startup:
+```
+level=info msg="Starting postgres_exporter" version=...
+level=info msg="Listening on" address=:9187
+level=info msg="TLS is disabled" http2=false
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="list" href="/configuration/environment-variables">
+    See equivalent environment variables for containerized deployments
+  </Card>
+  <Card title="Collectors Reference" icon="chart-line" href="/api-reference/collectors">
+    Learn what each collector monitors
+  </Card>
+</CardGroup>

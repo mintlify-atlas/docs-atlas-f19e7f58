@@ -1,0 +1,230 @@
+---
+title: Write-Ahead Log (WAL) Collector
+description: Monitor PostgreSQL WAL segment count and total size
+---
+
+The WAL (Write-Ahead Log) collector monitors the Write-Ahead Log directory, providing visibility into WAL segment accumulation and storage usage.
+
+<Note>
+This collector is **enabled by default**.
+</Note>
+
+## What It Monitors
+
+The WAL collector tracks:
+
+- Number of WAL segment files
+- Total size of WAL segments in bytes
+
+WAL segments are critical for PostgreSQL's crash recovery and replication. Excessive WAL accumulation can indicate:
+- Replication delays
+- Archive command failures
+- `wal_keep_size` / `wal_keep_segments` configuration issues
+- Checkpoint configuration problems
+
+## Metrics Exposed
+
+### pg_wal_segments
+
+Number of WAL segment files in the WAL directory.
+
+**Type:** Gauge  
+**Labels:** None
+
+**Example:**
+```promql
+pg_wal_segments 24
+```
+
+### pg_wal_size_bytes
+
+Total size of all WAL segment files in bytes.
+
+**Type:** Gauge  
+**Labels:** None
+
+**Example:**
+```promql
+pg_wal_size_bytes 402653184  # ~384 MB
+```
+
+## SQL Query Used
+
+The collector uses the `pg_ls_waldir()` function:
+
+```sql
+SELECT
+    COUNT(*) AS segments,
+    SUM(size) AS size
+FROM pg_ls_waldir()
+WHERE name ~ '^[0-9A-F]{24}$'
+```
+
+<Note>
+The regex filter ensures only valid WAL segment files are counted, excluding archive status files and other metadata.
+</Note>
+
+## Configuration
+
+### Enable/Disable the Collector
+
+```bash
+# Disable the wal collector
+postgres_exporter --no-collector.wal
+
+# Explicitly enable it (default behavior)
+postgres_exporter --collector.wal
+```
+
+## Use Cases
+
+### Alert on WAL Accumulation
+
+Detect when WAL segments are accumulating faster than they're being recycled:
+
+```promql
+pg_wal_segments > 100
+```
+
+### Monitor WAL Disk Usage
+
+Track WAL directory size growth:
+
+```promql
+rate(pg_wal_size_bytes[5m]) > threshold
+```
+
+### Detect Replication Issues
+
+WAL accumulation often indicates replication problems:
+
+```promql
+pg_wal_segments > 50 and pg_replication_lag_seconds > 60
+```
+
+### Capacity Planning
+
+Ensure adequate disk space for WAL:
+
+```promql
+pg_wal_size_bytes / <disk_total_bytes> > 0.7
+```
+
+## Understanding WAL Segment Counts
+
+### Normal Ranges
+
+Typical WAL segment counts depend on:
+
+- Database write activity
+- `checkpoint_timeout` and `max_wal_size` settings
+- Replication configuration
+- Archive mode settings
+
+**Typical ranges:**
+- Low activity: 3-10 segments
+- Moderate activity: 10-50 segments
+- High activity: 50-100 segments
+
+### Concerning Patterns
+
+- **Constantly increasing**: Archive command failures or stuck replication
+- **Sudden spikes**: Large batch operations or checkpoint issues
+- **Hundreds of segments**: Serious replication lag or misconfiguration
+
+## WAL Segment Size
+
+WAL segment size is configurable at compile time (default: 16 MB):
+
+```promql
+pg_wal_size_bytes / pg_wal_segments
+```
+
+This calculation gives you the average segment size.
+
+## Permissions Required
+
+The WAL collector requires:
+
+- `CONNECT` privilege on the database
+- Access to the `pg_ls_waldir()` function
+- For PostgreSQL 10+: `pg_monitor` role
+- For PostgreSQL &lt;10: This collector may not be available (check PostgreSQL version)
+
+<Warning>
+The `pg_ls_waldir()` function requires elevated permissions. Ensure your monitoring user has the `pg_monitor` role.
+</Warning>
+
+## PostgreSQL Version Compatibility
+
+This collector requires:
+
+- PostgreSQL 10 or later for `pg_ls_waldir()` function
+- Earlier versions should use the `xlog_location` collector instead
+
+## Related Collectors
+
+- [Replication](/collectors/replication) - Monitor replication lag
+- WAL Receiver Collector - Statistics on WAL receiver process (if enabled)
+- Replication Slot Collector - Track replication slot usage (if enabled)
+- X-Log Location Collector - Alternative WAL monitoring for older PostgreSQL versions (if enabled)
+
+## Troubleshooting WAL Accumulation
+
+### Check Archive Command Status
+
+If archiving is enabled:
+
+```sql
+SELECT archived_count, failed_count 
+FROM pg_stat_archiver;
+```
+
+### Check Replication Slots
+
+```sql
+SELECT slot_name, active, restart_lsn, 
+       pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS retained_bytes
+FROM pg_replication_slots;
+```
+
+Inactive slots or large `retained_bytes` values indicate problems.
+
+### Review WAL Configuration
+
+Check PostgreSQL settings:
+
+```sql
+SHOW wal_keep_size;  -- PostgreSQL 13+
+SHOW wal_keep_segments;  -- PostgreSQL &lt;13
+SHOW max_wal_size;
+SHOW checkpoint_timeout;
+```
+
+### Remove Unused Replication Slots
+
+Inactive replication slots prevent WAL recycling:
+
+```sql
+SELECT pg_drop_replication_slot('slot_name');
+```
+
+## Performance Considerations
+
+The WAL collector:
+
+- Queries the WAL directory via `pg_ls_waldir()`
+- Performs filesystem operations
+- Has minimal performance impact
+- Safe to query frequently
+- Does not interfere with WAL writing or replication
+
+## Important Notes
+
+<Note>
+WAL accumulation is normal during high write activity or planned replication delays. Only sustained growth or excessive counts indicate problems.
+</Note>
+
+<Warning>
+If WAL segments fill the disk, PostgreSQL will halt. Monitor WAL size and ensure adequate disk space.
+</Warning>

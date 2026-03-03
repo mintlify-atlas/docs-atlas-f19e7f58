@@ -1,0 +1,177 @@
+---
+title: statio-user-indexes
+description: Reference documentation for the statio-user-indexes collector
+---
+
+The `statio_user_indexes` collector exposes I/O statistics for user-defined indexes, tracking buffer cache hits and disk reads.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.statio-user-indexes`
+
+## Metrics
+
+### pg_statio_user_indexes_idx_blks_read_total
+
+**Type:** Counter  
+**Description:** Number of disk blocks read from this index
+
+**Labels:**
+- `schemaname` - Schema name
+- `relname` - Table name
+- `indexrelname` - Index name
+
+### pg_statio_user_indexes_idx_blks_hit_total
+
+**Type:** Counter  
+**Description:** Number of buffer hits in this index (blocks found in cache)
+
+**Labels:** `schemaname`, `relname`, `indexrelname`
+
+## SQL Query
+
+```sql
+SELECT
+  schemaname,
+  relname,
+  indexrelname,
+  idx_blks_read,
+  idx_blks_hit
+FROM pg_statio_user_indexes
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_statio_user_indexes` view (granted to `PUBLIC` by default)
+
+## Example Output
+
+```
+pg_statio_user_indexes_idx_blks_read_total{schemaname="public",relname="users",indexrelname="users_pkey"} 1523
+pg_statio_user_indexes_idx_blks_hit_total{schemaname="public",relname="users",indexrelname="users_pkey"} 125000
+pg_statio_user_indexes_idx_blks_read_total{schemaname="public",relname="users",indexrelname="idx_users_email"} 450
+pg_statio_user_indexes_idx_blks_hit_total{schemaname="public",relname="users",indexrelname="idx_users_email"} 89000
+```
+
+## Use Cases
+
+### Index Cache Hit Ratio
+
+```promql
+# Cache hit ratio per index
+sum by (indexrelname) (rate(pg_statio_user_indexes_idx_blks_hit_total[5m])) /
+(
+  sum by (indexrelname) (rate(pg_statio_user_indexes_idx_blks_hit_total[5m])) +
+  sum by (indexrelname) (rate(pg_statio_user_indexes_idx_blks_read_total[5m]))
+)
+
+# Overall index cache hit ratio
+sum(rate(pg_statio_user_indexes_idx_blks_hit_total[5m])) /
+(
+  sum(rate(pg_statio_user_indexes_idx_blks_hit_total[5m])) +
+  sum(rate(pg_statio_user_indexes_idx_blks_read_total[5m]))
+)
+```
+
+### Identify Poorly Cached Indexes
+
+```promql
+# Indexes with low cache hit ratio
+(
+  rate(pg_statio_user_indexes_idx_blks_read_total[5m]) /
+  (rate(pg_statio_user_indexes_idx_blks_hit_total[5m]) + 
+   rate(pg_statio_user_indexes_idx_blks_read_total[5m]))
+) > 0.2  # More than 20% disk reads
+```
+
+### Index I/O Activity
+
+```promql
+# Most I/O intensive indexes (disk reads)
+topk(10, rate(pg_statio_user_indexes_idx_blks_read_total[5m]))
+
+# Total index I/O per table
+sum by (relname) (
+  rate(pg_statio_user_indexes_idx_blks_read_total[5m]) +
+  rate(pg_statio_user_indexes_idx_blks_hit_total[5m])
+)
+```
+
+## Performance Analysis
+
+### Low Cache Hit Ratio
+
+If an index has a low cache hit ratio (< 90%):
+
+1. **Index is larger than available cache:**
+   - Increase `shared_buffers`
+   - Consider partial indexes to reduce size
+   - Check if index is actually needed
+
+2. **Index is rarely used:**
+   - May be a candidate for removal
+   - Check `pg_stat_user_indexes.idx_scan` counter
+
+3. **Sequential access pattern:**
+   - Index scans reading many blocks sequentially
+   - May benefit from index-only scans
+
+### High Disk Reads
+
+Indexes with high `idx_blks_read`:
+- Being used frequently but not cached
+- May indicate insufficient memory
+- Could benefit from increased `shared_buffers`
+
+## Alert Examples
+
+```yaml
+- alert: LowIndexCacheHitRatio
+  expr: |
+    (
+      sum by (indexrelname) (rate(pg_statio_user_indexes_idx_blks_hit_total[5m])) /
+      (
+        sum by (indexrelname) (rate(pg_statio_user_indexes_idx_blks_hit_total[5m])) +
+        sum by (indexrelname) (rate(pg_statio_user_indexes_idx_blks_read_total[5m]))
+      )
+    ) < 0.90
+  for: 10m
+  annotations:
+    summary: "Low cache hit ratio for index"
+    description: "Index {{ $labels.indexrelname }} has {{ $value }}% cache hit ratio"
+```
+
+## Combining with Index Usage Stats
+
+Combine with `pg_stat_user_indexes` to identify problematic indexes:
+
+```sql
+SELECT 
+  s.schemaname,
+  s.relname,
+  s.indexrelname,
+  s.idx_scan,
+  io.idx_blks_read,
+  io.idx_blks_hit,
+  CASE 
+    WHEN (io.idx_blks_hit + io.idx_blks_read) = 0 THEN 0
+    ELSE round(100.0 * io.idx_blks_hit / (io.idx_blks_hit + io.idx_blks_read), 2)
+  END AS cache_hit_ratio
+FROM pg_stat_user_indexes s
+JOIN pg_statio_user_indexes io USING (schemaname, relname, indexrelname)
+WHERE s.idx_scan > 100  -- Only consider used indexes
+ORDER BY cache_hit_ratio ASC;
+```
+
+## Related
+
+- [pg_statio_user_indexes view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STATIO-ALL-INDEXES-VIEW)
+- [statio-user-tables collector](/reference/collectors/statio-user-tables)
+- [Buffer cache tuning](https://www.postgresql.org/docs/current/runtime-config-resource.html#GUC-SHARED-BUFFERS)

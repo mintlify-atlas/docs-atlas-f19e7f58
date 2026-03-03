@@ -1,0 +1,309 @@
+---
+title: stat-database
+description: Reference documentation for the stat-database collector
+---
+
+The `stat_database` collector exposes comprehensive database-level statistics from the PostgreSQL statistics collector.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### Connection and Backend Metrics
+
+#### pg_stat_database_numbackends
+
+**Type:** Gauge  
+**Description:** Number of backends currently connected to this database
+
+**Labels:** `datid`, `datname`
+
+### Transaction Metrics
+
+#### pg_stat_database_xact_commit
+
+**Type:** Counter  
+**Description:** Number of transactions in this database that have been committed
+
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_xact_rollback
+
+**Type:** Counter  
+**Description:** Number of transactions in this database that have been rolled back
+
+**Labels:** `datid`, `datname`
+
+### Block I/O Metrics
+
+#### pg_stat_database_blks_read
+
+**Type:** Counter  
+**Description:** Number of disk blocks read in this database
+
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_blks_hit
+
+**Type:** Counter  
+**Description:** Number of times disk blocks were found already in the buffer cache
+
+**Labels:** `datid`, `datname`
+
+### Tuple (Row) Metrics
+
+#### pg_stat_database_tup_returned
+
+**Type:** Counter  
+**Description:** Number of rows returned by queries in this database
+
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_tup_fetched
+
+**Type:** Counter  
+**Description:** Number of rows fetched by queries in this database
+
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_tup_inserted
+
+**Type:** Counter  
+**Description:** Number of rows inserted by queries in this database
+
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_tup_updated
+
+**Type:** Counter  
+**Description:** Number of rows updated by queries in this database
+
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_tup_deleted
+
+**Type:** Counter  
+**Description:** Number of rows deleted by queries in this database
+
+**Labels:** `datid`, `datname`
+
+### Conflict and Error Metrics
+
+#### pg_stat_database_conflicts
+
+**Type:** Counter  
+**Description:** Number of queries canceled due to conflicts with recovery in this database (standby servers only)
+
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_deadlocks
+
+**Type:** Counter  
+**Description:** Number of deadlocks detected in this database
+
+**Labels:** `datid`, `datname`
+
+### Temporary File Metrics
+
+#### pg_stat_database_temp_files
+
+**Type:** Counter  
+**Description:** Number of temporary files created by queries in this database
+
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_temp_bytes
+
+**Type:** Counter  
+**Description:** Total amount of data written to temporary files by queries in this database
+
+**Labels:** `datid`, `datname`
+
+### I/O Timing Metrics
+
+#### pg_stat_database_blk_read_time
+
+**Type:** Counter  
+**Description:** Time spent reading data file blocks by backends in this database, in milliseconds
+
+**Labels:** `datid`, `datname`
+
+**Note:** Requires `track_io_timing = on`
+
+#### pg_stat_database_blk_write_time
+
+**Type:** Counter  
+**Description:** Time spent writing data file blocks by backends in this database, in milliseconds
+
+**Labels:** `datid`, `datname`
+
+**Note:** Requires `track_io_timing = on`
+
+### Activity Time Metrics
+
+#### pg_stat_database_active_time_seconds_total
+
+**Type:** Counter  
+**Description:** Time spent executing SQL statements in this database, in seconds
+
+**Labels:** `datid`, `datname`
+
+**Availability:** PostgreSQL 14+
+
+### Statistics Reset
+
+#### pg_stat_database_stats_reset
+
+**Type:** Counter  
+**Description:** Time at which these statistics were last reset (Unix timestamp)
+
+**Labels:** `datid`, `datname`
+
+## SQL Query
+
+**PostgreSQL 14+:**
+```sql
+SELECT 
+  datid,
+  datname,
+  numbackends,
+  xact_commit,
+  xact_rollback,
+  blks_read,
+  blks_hit,
+  tup_returned,
+  tup_fetched,
+  tup_inserted,
+  tup_updated,
+  tup_deleted,
+  conflicts,
+  temp_files,
+  temp_bytes,
+  deadlocks,
+  blk_read_time,
+  blk_write_time,
+  stats_reset,
+  active_time
+FROM pg_stat_database;
+```
+
+**PostgreSQL less than  14:**
+```sql
+SELECT 
+  datid,
+  datname,
+  numbackends,
+  xact_commit,
+  xact_rollback,
+  blks_read,
+  blks_hit,
+  tup_returned,
+  tup_fetched,
+  tup_inserted,
+  tup_updated,
+  tup_deleted,
+  conflicts,
+  temp_files,
+  temp_bytes,
+  deadlocks,
+  blk_read_time,
+  blk_write_time,
+  stats_reset
+FROM pg_stat_database;
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+**Version-specific columns:**
+- **PostgreSQL 14+:** `active_time` column added
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_stat_database` view (granted to `PUBLIC` by default)
+
+## Example Output
+
+```
+pg_stat_database_numbackends{datid="16384",datname="myapp"} 25
+pg_stat_database_xact_commit{datid="16384",datname="myapp"} 1234567
+pg_stat_database_xact_rollback{datid="16384",datname="myapp"} 123
+pg_stat_database_blks_read{datid="16384",datname="myapp"} 987654
+pg_stat_database_blks_hit{datid="16384",datname="myapp"} 98765432
+pg_stat_database_tup_inserted{datid="16384",datname="myapp"} 5000000
+pg_stat_database_deadlocks{datid="16384",datname="myapp"} 5
+```
+
+## Use Cases
+
+### Cache Hit Ratio
+
+```promql
+# Database cache hit ratio
+sum(rate(pg_stat_database_blks_hit[5m])) /
+(sum(rate(pg_stat_database_blks_hit[5m])) + 
+ sum(rate(pg_stat_database_blks_read[5m])))
+```
+
+### Transaction Rate
+
+```promql
+# Commits per second
+rate(pg_stat_database_xact_commit[5m])
+
+# Rollback ratio
+rate(pg_stat_database_xact_rollback[5m]) /
+(rate(pg_stat_database_xact_commit[5m]) + 
+ rate(pg_stat_database_xact_rollback[5m]))
+```
+
+### Write Activity
+
+```promql
+# Insert/Update/Delete rate
+rate(pg_stat_database_tup_inserted[5m]) +
+rate(pg_stat_database_tup_updated[5m]) +
+rate(pg_stat_database_tup_deleted[5m])
+```
+
+### Temporary File Usage
+
+```promql
+# Temporary file creation rate
+rate(pg_stat_database_temp_files[5m])
+
+# Temporary data written per second
+rate(pg_stat_database_temp_bytes[5m])
+```
+
+## Performance Tuning
+
+### Low Cache Hit Ratio
+
+If `blks_hit / (blks_hit + blks_read)` < 0.90:
+- Increase `shared_buffers`
+- Optimize queries to reduce sequential scans
+- Add indexes where appropriate
+
+### High Temporary File Usage
+
+If `temp_files` or `temp_bytes` is high:
+- Increase `work_mem` for sort and hash operations
+- Optimize queries to reduce memory usage
+- Add indexes to avoid sorts
+
+### High Rollback Ratio
+
+If rollbacks are high:
+- Application logic issues
+- Deadlocks or serialization failures
+- Connection pool issues
+
+## Related
+
+- [pg_stat_database view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-DATABASE-VIEW)
+- [Statistics collector documentation](https://www.postgresql.org/docs/current/monitoring-stats.html)

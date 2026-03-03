@@ -1,0 +1,201 @@
+---
+title: Docker Deployment
+description: Deploy PostgreSQL Server Exporter using Docker
+---
+
+The PostgreSQL Server Exporter is available as a Docker image from Quay.io, making it easy to deploy in containerized environments.
+
+## Quick Start
+
+<Steps>
+  <Step title="Start a test PostgreSQL database">
+    First, start a PostgreSQL database for testing:
+    ```bash
+    docker run --net=host -it --rm \
+      -e POSTGRES_PASSWORD=password \
+      postgres
+    ```
+  </Step>
+
+  <Step title="Run the exporter">
+    Launch the postgres_exporter container:
+    ```bash
+    docker run \
+      --net=host \
+      -e DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable" \
+      -e DATA_SOURCE_USER=postgres \
+      -e DATA_SOURCE_PASS=password \
+      quay.io/prometheuscommunity/postgres-exporter
+    ```
+  </Step>
+
+  <Step title="Verify metrics are exposed">
+    Test that metrics are being collected:
+    ```bash
+    curl "http://localhost:9187/metrics"
+    ```
+  </Step>
+</Steps>
+
+## Using Password Files (Recommended)
+
+<Warning>
+Avoid storing passwords in environment variables in production. Use `DATA_SOURCE_PASS_FILE` with mounted files instead.
+</Warning>
+
+<Steps>
+  <Step title="Create a password file">
+    Create a file containing your database password:
+    ```bash
+    echo "your_password" > /path/to/postgres_password.txt
+    chmod 600 /path/to/postgres_password.txt
+    ```
+  </Step>
+
+  <Step title="Set correct file permissions">
+    The container runs as uid/gid 65534 (`nobody`), so ensure the password file is readable:
+    ```bash
+    chown 65534:65534 /path/to/postgres_password.txt
+    ```
+  </Step>
+
+  <Step title="Mount and use the password file">
+    Run the container with the mounted password file:
+    ```bash
+    docker run \
+      --net=host \
+      -v /path/to/postgres_password.txt:/secrets/password:ro \
+      -e DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable" \
+      -e DATA_SOURCE_USER=postgres \
+      -e DATA_SOURCE_PASS_FILE=/secrets/password \
+      quay.io/prometheuscommunity/postgres-exporter
+    ```
+  </Step>
+</Steps>
+
+## Configuration with Config File
+
+For multi-target deployments or advanced configuration, mount a config file:
+
+<Steps>
+  <Step title="Create a config file">
+    Create `postgres_exporter.yml`:
+    ```yaml
+    auth_modules:
+      primary:
+        type: userpass
+        userpass:
+          username: postgres_exporter
+          password: your_password
+        options:
+          sslmode: require
+    ```
+  </Step>
+
+  <Step title="Mount the config file">
+    ```bash
+    docker run \
+      --net=host \
+      -v /path/to/postgres_exporter.yml:/config/postgres_exporter.yml:ro \
+      -e DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable" \
+      -e DATA_SOURCE_USER=postgres \
+      -e DATA_SOURCE_PASS_FILE=/secrets/password \
+      quay.io/prometheuscommunity/postgres-exporter \
+      --config.file=/config/postgres_exporter.yml
+    ```
+  </Step>
+</Steps>
+
+## Custom Queries
+
+To use custom metrics queries:
+
+<Steps>
+  <Step title="Create a queries.yaml file">
+    Define your custom queries in a YAML file.
+  </Step>
+
+  <Step title="Mount and reference the queries file">
+    ```bash
+    docker run \
+      --net=host \
+      -v /path/to/queries.yaml:/queries.yaml:ro \
+      -e DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable" \
+      -e DATA_SOURCE_USER=postgres \
+      -e DATA_SOURCE_PASS_FILE=/secrets/password \
+      quay.io/prometheuscommunity/postgres-exporter \
+      --extend.query-path=/queries.yaml
+    ```
+  </Step>
+</Steps>
+
+## Environment Variables
+
+The exporter supports the following connection environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `DATA_SOURCE_NAME` | Complete PostgreSQL DSN (legacy format) |
+| `DATA_SOURCE_URI` | Database hostname and connection options |
+| `DATA_SOURCE_URI_FILE` | Path to file containing the URI |
+| `DATA_SOURCE_USER` | Database username |
+| `DATA_SOURCE_USER_FILE` | Path to file containing the username |
+| `DATA_SOURCE_PASS` | Database password |
+| `DATA_SOURCE_PASS_FILE` | Path to file containing the password (recommended) |
+
+## Exposed Ports
+
+The container exposes:
+- **Port 9187**: HTTP endpoint for metrics and health checks
+
+## Docker Compose Example
+
+```yaml
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_USER: postgres
+    ports:
+      - "5432:5432"
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/postgres?sslmode=disable"
+      DATA_SOURCE_USER: "postgres"
+      DATA_SOURCE_PASS: "password"
+    depends_on:
+      - postgres
+```
+
+<Warning>
+In production, replace `DATA_SOURCE_PASS` with `DATA_SOURCE_PASS_FILE` and use Docker secrets or mounted files.
+</Warning>
+
+## Security Considerations
+
+<Warning>
+- The container runs as uid/gid 65534 (`nobody` user)
+- Ensure mounted password files have appropriate permissions (mode 600)
+- Use `DATA_SOURCE_PASS_FILE` instead of `DATA_SOURCE_PASS` in production
+- Never commit password files to version control
+- Consider using Docker secrets or Kubernetes secrets for password management
+</Warning>
+
+## Available Images
+
+The official image is available at:
+- `quay.io/prometheuscommunity/postgres-exporter:latest`
+- `quay.io/prometheuscommunity/postgres-exporter:v<version>`
+
+Supported architectures:
+- linux/amd64
+- linux/arm64
+- linux/armv7
+- linux/ppc64le

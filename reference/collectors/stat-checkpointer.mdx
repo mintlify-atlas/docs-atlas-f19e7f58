@@ -1,0 +1,194 @@
+---
+title: stat-checkpointer
+description: Reference documentation for the stat-checkpointer collector
+---
+
+The `stat_checkpointer` collector exposes checkpoint and restartpoint statistics from the checkpointer process.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.stat-checkpointer`
+
+<Warning>
+This collector is **only available on PostgreSQL 17+**. The collector will skip collection on earlier versions.
+</Warning>
+
+## Metrics
+
+### pg_stat_checkpointer_num_timed_total
+
+**Type:** Counter  
+**Description:** Number of scheduled checkpoints due to timeout
+
+### pg_stat_checkpointer_num_requested_total
+
+**Type:** Counter  
+**Description:** Number of requested checkpoints that have been performed
+
+### pg_stat_checkpointer_restartpoints_timed_total
+
+**Type:** Counter  
+**Description:** Number of scheduled restartpoints due to timeout or after a failed attempt to perform it
+
+### pg_stat_checkpointer_restartpoints_req_total
+
+**Type:** Counter  
+**Description:** Number of requested restartpoints
+
+### pg_stat_checkpointer_restartpoints_done_total
+
+**Type:** Counter  
+**Description:** Number of restartpoints that have been performed
+
+### pg_stat_checkpointer_write_time_total
+
+**Type:** Counter  
+**Description:** Total amount of time spent writing checkpoint and restartpoint files to disk, in milliseconds
+
+### pg_stat_checkpointer_sync_time_total
+
+**Type:** Counter  
+**Description:** Total amount of time spent synchronizing checkpoint and restartpoint files to disk, in milliseconds
+
+### pg_stat_checkpointer_buffers_written_total
+
+**Type:** Counter  
+**Description:** Number of buffers written during checkpoints and restartpoints
+
+### pg_stat_checkpointer_stats_reset_total
+
+**Type:** Counter  
+**Description:** Time at which these statistics were last reset (Unix timestamp)
+
+## SQL Query
+
+```sql
+SELECT
+  num_timed,
+  num_requested,
+  restartpoints_timed,
+  restartpoints_req,
+  restartpoints_done,
+  write_time,
+  sync_time,
+  buffers_written,
+  stats_reset
+FROM pg_stat_checkpointer;
+```
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 17+ only
+
+**Background:** In PostgreSQL 17, checkpoint-related statistics were moved from `pg_stat_bgwriter` to the new `pg_stat_checkpointer` view.
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_stat_checkpointer` view (granted to `PUBLIC` by default)
+
+## Example Output
+
+```
+pg_stat_checkpointer_num_timed_total 1523
+pg_stat_checkpointer_num_requested_total 45
+pg_stat_checkpointer_restartpoints_timed_total 234
+pg_stat_checkpointer_restartpoints_req_total 12
+pg_stat_checkpointer_restartpoints_done_total 246
+pg_stat_checkpointer_write_time_total 458932
+pg_stat_checkpointer_sync_time_total 1234
+pg_stat_checkpointer_buffers_written_total 98234
+pg_stat_checkpointer_stats_reset_total 1638000000
+```
+
+## Use Cases
+
+### Monitor Checkpoint Frequency
+
+```promql
+# Total checkpoint rate
+rate(pg_stat_checkpointer_num_timed_total[5m]) + 
+rate(pg_stat_checkpointer_num_requested_total[5m])
+
+# Ratio of requested vs timed checkpoints
+rate(pg_stat_checkpointer_num_requested_total[5m]) /
+(rate(pg_stat_checkpointer_num_timed_total[5m]) + 
+ rate(pg_stat_checkpointer_num_requested_total[5m]))
+```
+
+### Checkpoint Performance
+
+```promql
+# Average write time per checkpoint
+rate(pg_stat_checkpointer_write_time_total[5m]) /
+rate(pg_stat_checkpointer_num_timed_total[5m] + pg_stat_checkpointer_num_requested_total[5m])
+```
+
+### Restartpoint Monitoring (Replicas)
+
+```promql
+# Restartpoint completion rate
+rate(pg_stat_checkpointer_restartpoints_done_total[5m])
+```
+
+## Checkpoints vs Restartpoints
+
+- **Checkpoints:** Performed on primary servers to ensure data consistency
+- **Restartpoints:** Similar to checkpoints but performed on standby servers during recovery
+
+## Tuning Recommendations
+
+### High `num_requested`
+
+If requested checkpoints are frequent:
+- Increase `max_wal_size`
+- Increase `checkpoint_timeout`
+- Monitor write load on the primary
+
+### High Write/Sync Times
+
+If checkpoint I/O is slow:
+- Check storage performance
+- Adjust `checkpoint_completion_target`
+- Consider faster storage
+
+### Failed Restartpoints
+
+If `restartpoints_req` > `restartpoints_done`:
+- Restartpoints are being skipped
+- May indicate heavy replay activity
+- Check replica performance
+
+## Alert Examples
+
+```yaml
+- alert: HighCheckpointRate
+  expr: rate(pg_stat_checkpointer_num_requested_total[5m]) > 0.1
+  annotations:
+    summary: "High rate of requested checkpoints"
+    description: "PostgreSQL is checkpointing too frequently. Consider increasing max_wal_size."
+
+- alert: SlowCheckpoints
+  expr: |
+    rate(pg_stat_checkpointer_write_time_total[5m]) / 
+    rate(pg_stat_checkpointer_num_timed_total[5m] + pg_stat_checkpointer_num_requested_total[5m]) 
+    > 30000
+  annotations:
+    summary: "Checkpoints taking too long"
+    description: "Average checkpoint write time exceeds 30 seconds"
+```
+
+## Migration from PostgreSQL 16
+
+If upgrading from PostgreSQL 16 to 17:
+- Enable this collector: `--collector.stat-checkpointer`
+- Checkpoint metrics will no longer appear in `pg_stat_bgwriter`
+- Update dashboards and alerts to use new metric names
+
+## Related
+
+- [pg_stat_checkpointer view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-CHECKPOINTER-VIEW)
+- [Checkpoint documentation](https://www.postgresql.org/docs/current/wal-configuration.html)
+- [stat-bgwriter collector](/reference/collectors/stat-bgwriter) (PostgreSQL less than  17)

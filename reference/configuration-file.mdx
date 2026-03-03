@@ -1,0 +1,200 @@
+---
+title: Configuration File
+description: Complete reference for the postgres_exporter.yml configuration file
+---
+
+The configuration file controls the behavior of the exporter and is specified using the `--config.file` flag. The default file name is `postgres_exporter.yml`.
+
+## File Location
+
+By default, the exporter looks for `postgres_exporter.yml` in the current working directory. You can specify a different location:
+
+```bash
+postgres_exporter --config.file=/etc/postgres_exporter/config.yml
+```
+
+## Configuration Structure
+
+The configuration file uses YAML format with strict field validation. Unknown fields will cause the configuration to fail loading.
+
+### Root Configuration
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `auth_modules` | map[string]AuthModule | No | Authentication modules for multi-target support |
+
+## auth_modules
+
+The `auth_modules` section defines preset authentication and connection parameters for use with the [multi-target endpoint](/advanced/multi-target). Each module is identified by a unique key that can be referenced in `/probe` requests.
+
+<Info>
+The `auth_modules` configuration is specifically designed for the multi-target pattern where a single exporter instance scrapes multiple PostgreSQL servers.
+</Info>
+
+### AuthModule Schema
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | Authentication type. Currently only `"userpass"` is supported |
+| `userpass` | UserPass | Conditional | Username and password credentials. Required when `type` is `"userpass"` |
+| `options` | map[string]string | No | Additional DSN parameters as key-value pairs |
+
+### UserPass Schema
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `username` | string | Yes | PostgreSQL username for authentication |
+| `password` | string | Yes | PostgreSQL password for authentication |
+
+### options Field
+
+The `options` map allows you to specify any PostgreSQL connection string parameters. These are appended to the DSN as `key=value` parameters.
+
+Common options include:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `sslmode` | string | SSL mode: `disable`, `require`, `verify-ca`, `verify-full` |
+| `sslrootcert` | string | Path to SSL root certificate |
+| `sslcert` | string | Path to SSL client certificate |
+| `sslkey` | string | Path to SSL client key |
+| `connect_timeout` | string | Connection timeout in seconds |
+| `application_name` | string | Application name for connection identification |
+
+## Complete Example
+
+```yaml
+auth_modules:
+  # Production primary database
+  prod_primary:
+    type: userpass
+    userpass:
+      username: postgres_exporter
+      password: secure_password_1
+    options:
+      sslmode: verify-full
+      sslrootcert: /etc/ssl/certs/ca-bundle.crt
+      connect_timeout: "10"
+      application_name: postgres_exporter
+
+  # Production replica
+  prod_replica:
+    type: userpass
+    userpass:
+      username: readonly_exporter
+      password: secure_password_2
+    options:
+      sslmode: verify-full
+      sslrootcert: /etc/ssl/certs/ca-bundle.crt
+      application_name: postgres_exporter_replica
+
+  # Development environment (no SSL)
+  dev_server:
+    type: userpass
+    userpass:
+      username: postgres
+      password: dev_password
+    options:
+      sslmode: disable
+
+  # Localhost connection
+  local:
+    type: userpass
+    userpass:
+      username: postgres_exporter
+      password: local_pass
+    options:
+      sslmode: disable
+      connect_timeout: "5"
+```
+
+## Usage with Multi-Target
+
+Once configured, auth modules can be used with the `/probe` endpoint:
+
+```bash
+# Probe a server using the prod_primary auth module
+curl 'http://localhost:9187/probe?target=db1.example.com:5432&auth_module=prod_primary'
+
+# Probe a replica using the prod_replica auth module
+curl 'http://localhost:9187/probe?target=replica1.example.com:5432&auth_module=prod_replica'
+```
+
+## Configuration Validation
+
+The exporter performs the following validations on startup:
+
+- YAML syntax must be valid
+- Unknown fields are rejected
+- `type` field must be present in each auth module
+- When `type` is `"userpass"`, both `username` and `password` must be non-empty
+
+### Validation Errors
+
+If the configuration file fails validation:
+
+1. The exporter logs a warning: `"Error loading config"`
+2. The exporter continues running without auth modules
+3. Auth must be provided in the DSN for every target when using `/probe`
+4. The metric `postgres_exporter_config_last_reload_successful` is set to `0`
+
+<Warning>
+If the configuration file is invalid, the exporter will continue running but multi-target support will not work properly. You must provide full credentials in each DSN.
+</Warning>
+
+## Configuration Reload
+
+The exporter automatically reloads the configuration file when it changes. Configuration reload metrics:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `postgres_exporter_config_last_reload_successful` | Gauge | 1 if last reload succeeded, 0 if it failed |
+| `postgres_exporter_config_last_reload_success_timestamp_seconds` | Gauge | Timestamp of last successful reload |
+
+## Security Best Practices
+
+<Warning>
+Configuration files contain sensitive credentials. Protect them appropriately.
+</Warning>
+
+### File Permissions
+
+```bash
+# Set restrictive permissions
+chmod 600 /etc/postgres_exporter/config.yml
+chown postgres_exporter:postgres_exporter /etc/postgres_exporter/config.yml
+```
+
+### Credential Management
+
+1. **Use separate users per environment**: Create dedicated PostgreSQL users for monitoring
+2. **Limit permissions**: Grant only `pg_monitor` role or minimal required permissions
+3. **Rotate passwords**: Implement regular password rotation
+4. **Avoid root credentials**: Never use superuser credentials for monitoring
+
+### Alternative Approaches
+
+For enhanced security, consider:
+
+- Using environment variables instead of config file (see [Environment Variables](/reference/environment-variables))
+- Mounting credentials from secret management systems
+- Using `DATA_SOURCE_PASS_FILE` for password files
+- Implementing authentication via client certificates
+
+## Minimal Configuration
+
+For simple single-target deployments, you can skip the configuration file entirely:
+
+```bash
+# No config file needed
+DATA_SOURCE_NAME="postgresql://user:pass@localhost:5432/postgres?sslmode=disable" \
+  postgres_exporter
+```
+
+The configuration file is only required when using the multi-target pattern.
+
+## See Also
+
+- [Command-Line Flags](/reference/command-line-flags) - Complete flag reference
+- [Environment Variables](/reference/environment-variables) - Environment variable reference
+- [Multi-Target Deployment](/advanced/multi-target) - Using auth modules in practice

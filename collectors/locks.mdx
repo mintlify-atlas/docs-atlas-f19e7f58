@@ -1,0 +1,177 @@
+---
+title: Locks Collector
+description: Monitor PostgreSQL lock counts by database and mode
+---
+
+The locks collector monitors PostgreSQL locking activity, providing visibility into lock contention across databases.
+
+<Note>
+This collector is **enabled by default**.
+</Note>
+
+## What It Monitors
+
+The locks collector tracks the number of locks held in each database, categorized by lock mode. It helps identify:
+
+- Lock contention issues
+- Deadlock situations
+- Databases with high locking activity
+
+## Metrics Exposed
+
+### pg_locks_count
+
+Number of locks held in each database, grouped by lock mode.
+
+**Type:** Gauge  
+**Labels:**
+- `datname` - Database name
+- `mode` - Lock mode (see Lock Modes section)
+
+**Example:**
+```promql
+pg_locks_count{datname="myapp",mode="accesssharelock"} 15
+pg_locks_count{datname="myapp",mode="rowexclusivelock"} 3
+```
+
+## Lock Modes
+
+PostgreSQL supports nine lock modes, ordered from least to most restrictive:
+
+1. **accesssharelock** - Acquired by `SELECT` queries
+2. **rowsharelock** - Acquired by `SELECT FOR UPDATE`
+3. **rowexclusivelock** - Acquired by `INSERT`, `UPDATE`, `DELETE`
+4. **shareupdateexclusivelock** - Acquired by `VACUUM`, `CREATE INDEX CONCURRENTLY`
+5. **sharelock** - Acquired by `CREATE INDEX`
+6. **sharerowexclusivelock** - Rare lock mode
+7. **exclusivelock** - Blocks all concurrent access
+8. **accessexclusivelock** - Acquired by `DROP TABLE`, `TRUNCATE`, `ALTER TABLE`
+9. **sireadlock** - Used by serializable transactions
+
+## SQL Query Used
+
+The collector executes a comprehensive query that reports all lock modes for all databases:
+
+```sql
+SELECT 
+    pg_database.datname as datname,
+    tmp.mode as mode,
+    COALESCE(count, 0) as count 
+FROM 
+    (VALUES 
+        ('accesssharelock'), 
+        ('rowsharelock'), 
+        ('rowexclusivelock'), 
+        ('shareupdateexclusivelock'), 
+        ('sharelock'), 
+        ('sharerowexclusivelock'), 
+        ('exclusivelock'), 
+        ('accessexclusivelock'), 
+        ('sireadlock')
+    ) AS tmp(mode)
+    CROSS JOIN pg_database 
+    LEFT JOIN (
+        SELECT 
+            database, 
+            lower(mode) AS mode, 
+            count(*) AS count 
+        FROM pg_locks 
+        WHERE database IS NOT NULL 
+        GROUP BY database, lower(mode)
+    ) AS tmp2 ON tmp.mode = tmp2.mode 
+    and pg_database.oid = tmp2.database 
+ORDER BY 1
+```
+
+## Configuration
+
+### Enable/Disable the Collector
+
+```bash
+# Disable the locks collector
+postgres_exporter --no-collector.locks
+
+# Explicitly enable it (default behavior)
+postgres_exporter --collector.locks
+```
+
+## Use Cases
+
+### Detect Lock Contention
+
+Alert when exclusive locks are held for extended periods:
+
+```promql
+pg_locks_count{mode="accessexclusivelock"} > 0
+```
+
+### Monitor Normal Lock Activity
+
+Track typical lock usage patterns:
+
+```promql
+sum(pg_locks_count{mode="accesssharelock"}) by (datname)
+```
+
+### Identify Problematic Databases
+
+Find databases with the highest lock counts:
+
+```promql
+topk(5, sum(pg_locks_count) by (datname))
+```
+
+### Alert on Lock Spikes
+
+Detect sudden increases in locking:
+
+```promql
+rate(pg_locks_count[5m]) > threshold
+```
+
+## Understanding Lock Patterns
+
+### Normal Activity
+
+- Many `accesssharelock` (SELECT queries)
+- Moderate `rowexclusivelock` (INSERT/UPDATE/DELETE)
+- Few exclusive locks
+
+### Potential Issues
+
+- High `accessexclusivelock` - Table maintenance blocking queries
+- Many `sharerowexclusivelock` - Potential deadlock situations
+- Sustained high lock counts - Query optimization needed
+
+## Permissions Required
+
+The locks collector requires:
+
+- `CONNECT` privilege on the database
+- Read access to the `pg_locks` system view
+- For PostgreSQL 10+: `pg_monitor` or `pg_read_all_stats` role
+- For PostgreSQL &lt;10: Superuser or specific function access
+
+## Performance Considerations
+
+The locks collector:
+
+- Queries the `pg_locks` system view
+- Uses a CROSS JOIN with all lock modes to ensure complete coverage
+- Has minimal performance impact
+- Query execution time grows with the number of databases and active locks
+- Safe to run frequently (every scrape interval)
+
+## Related Collectors
+
+- [Database Statistics](/collectors/stat-database) - Tracks deadlock counts
+- Long Running Transactions Collector - Identifies transactions holding locks (if enabled)
+
+## Troubleshooting
+
+If you see unexpectedly high lock counts:
+
+1. Check for long-running transactions: `SELECT * FROM pg_stat_activity`
+2. Identify blocking queries: Use `pg_blocking_pids()` function
+3. Review application query patterns
+4. Consider using connection pooling to reduce lock duration

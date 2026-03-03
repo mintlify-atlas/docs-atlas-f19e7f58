@@ -1,0 +1,348 @@
+---
+title: User Tables Statistics Collector
+description: Monitor PostgreSQL table-level access patterns and maintenance statistics
+---
+
+The user tables statistics collector gathers detailed metrics from the `pg_stat_user_tables` system view, providing table-level visibility into access patterns, data modifications, and maintenance operations.
+
+<Note>
+This collector is **enabled by default**.
+</Note>
+
+## What It Monitors
+
+The user tables statistics collector tracks:
+
+- Sequential and index scan activity
+- Row insertion, update, and deletion counts
+- Live and dead tuple counts
+- Vacuum and analyze operations
+- Table and index sizes
+- HOT (Heap-Only Tuple) updates
+
+## Metrics Exposed
+
+### Scan Metrics
+
+#### pg_stat_user_tables_seq_scan
+
+Number of sequential scans initiated on this table.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_seq_tup_read
+
+Number of live rows fetched by sequential scans.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_idx_scan
+
+Number of index scans initiated on this table.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_idx_tup_fetch
+
+Number of live rows fetched by index scans.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+### Modification Metrics
+
+#### pg_stat_user_tables_n_tup_ins
+
+Number of rows inserted.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_tup_upd
+
+Number of rows updated.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_tup_del
+
+Number of rows deleted.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_tup_hot_upd
+
+Number of rows HOT updated (Heap-Only Tuple updates that don't require index updates).
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+<Note>
+High HOT update ratios indicate efficient updates. Low ratios may suggest fill factor adjustments are needed.
+</Note>
+
+### Tuple Count Metrics
+
+#### pg_stat_user_tables_n_live_tup
+
+Estimated number of live rows.
+
+**Type:** Gauge  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_dead_tup
+
+Estimated number of dead rows.
+
+**Type:** Gauge  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_n_mod_since_analyze
+
+Estimated number of rows changed since last analyze.
+
+**Type:** Gauge  
+**Labels:** `datname`, `schemaname`, `relname`
+
+### Maintenance Operation Metrics
+
+#### pg_stat_user_tables_last_vacuum
+
+Timestamp of the last manual vacuum (not counting VACUUM FULL).
+
+**Type:** Gauge  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_last_autovacuum
+
+Timestamp of the last autovacuum.
+
+**Type:** Gauge  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_last_analyze
+
+Timestamp of the last manual analyze.
+
+**Type:** Gauge  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_last_autoanalyze
+
+Timestamp of the last autoanalyze.
+
+**Type:** Gauge  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_vacuum_count
+
+Number of times this table has been manually vacuumed.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_autovacuum_count
+
+Number of times this table has been vacuumed by autovacuum.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_analyze_count
+
+Number of times this table has been manually analyzed.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_autoanalyze_count
+
+Number of times this table has been analyzed by autoanalyze.
+
+**Type:** Counter  
+**Labels:** `datname`, `schemaname`, `relname`
+
+### Size Metrics
+
+#### pg_stat_user_tables_table_size_bytes
+
+Total disk space used by this table in bytes.
+
+**Type:** Gauge  
+**Labels:** `datname`, `schemaname`, `relname`
+
+#### pg_stat_user_tables_index_size_bytes
+
+Total disk space used by indexes on this table in bytes.
+
+**Type:** Gauge  
+**Labels:** `datname`, `schemaname`, `relname`
+
+## SQL Query Used
+
+```sql
+SELECT
+    current_database() datname,
+    schemaname,
+    relname,
+    seq_scan,
+    seq_tup_read,
+    idx_scan,
+    idx_tup_fetch,
+    n_tup_ins,
+    n_tup_upd,
+    n_tup_del,
+    n_tup_hot_upd,
+    n_live_tup,
+    n_dead_tup,
+    n_mod_since_analyze,
+    COALESCE(last_vacuum, '1970-01-01Z') as last_vacuum,
+    COALESCE(last_autovacuum, '1970-01-01Z') as last_autovacuum,
+    COALESCE(last_analyze, '1970-01-01Z') as last_analyze,
+    COALESCE(last_autoanalyze, '1970-01-01Z') as last_autoanalyze,
+    vacuum_count,
+    autovacuum_count,
+    analyze_count,
+    autoanalyze_count,
+    pg_indexes_size(relid) as indexes_size,
+    pg_table_size(relid) as table_size
+FROM pg_stat_user_tables
+```
+
+## Configuration
+
+### Enable/Disable the Collector
+
+```bash
+# Disable the stat_user_tables collector
+postgres_exporter --no-collector.stat_user_tables
+
+# Explicitly enable it (default behavior)
+postgres_exporter --collector.stat_user_tables
+```
+
+## Use Cases
+
+### Identify Tables Needing Indexes
+
+Find tables with high sequential scan ratios:
+
+```promql
+rate(pg_stat_user_tables_seq_scan[5m]) > 
+rate(pg_stat_user_tables_idx_scan[5m])
+```
+
+### Monitor Dead Tuple Bloat
+
+Detect tables with excessive dead tuples:
+
+```promql
+pg_stat_user_tables_n_dead_tup / pg_stat_user_tables_n_live_tup > 0.2
+```
+
+### Calculate HOT Update Efficiency
+
+Measure HOT update ratio:
+
+```promql
+rate(pg_stat_user_tables_n_tup_hot_upd[5m]) / 
+rate(pg_stat_user_tables_n_tup_upd[5m])
+```
+
+A ratio close to 1.0 indicates efficient updates.
+
+### Alert on Stale Statistics
+
+Detect tables that haven't been analyzed recently:
+
+```promql
+time() - pg_stat_user_tables_last_autoanalyze > 86400
+```
+
+### Find Largest Tables
+
+Identify tables consuming the most disk space:
+
+```promql
+topk(10, pg_stat_user_tables_table_size_bytes)
+```
+
+### Monitor Index Size Growth
+
+Track index bloat over time:
+
+```promql
+rate(pg_stat_user_tables_index_size_bytes[1d])
+```
+
+## Understanding Table Activity Patterns
+
+### Read-Heavy Tables
+
+- High `seq_scan` or `idx_scan` values
+- Low modification counts
+- Consider read replicas for scaling
+
+### Write-Heavy Tables
+
+- High `n_tup_ins`, `n_tup_upd`, `n_tup_del` values
+- May accumulate dead tuples quickly
+- Requires frequent vacuuming
+- Monitor autovacuum effectiveness
+
+### Tables Needing Maintenance
+
+- High `n_dead_tup` relative to `n_live_tup`
+- Large `n_mod_since_analyze` values
+- Old `last_autovacuum` or `last_autoanalyze` timestamps
+
+## Permissions Required
+
+The user tables statistics collector requires:
+
+- `CONNECT` privilege on the database
+- Read access to the `pg_stat_user_tables` view
+- For size metrics: Access to `pg_table_size()` and `pg_indexes_size()` functions
+- For PostgreSQL 10+: `pg_monitor` or `pg_read_all_stats` role
+- For PostgreSQL &lt;10: Read access to statistics views and size functions
+
+## Performance Considerations
+
+The user tables statistics collector:
+
+- Queries per-table statistics from `pg_stat_user_tables`
+- Calculates table and index sizes for each table
+- Can generate many metrics in databases with many tables
+- Size calculations may be expensive for very large tables
+- Consider disabling if you have thousands of tables and performance issues
+
+<Warning>
+In databases with thousands of user tables, this collector can generate a large number of time series. Monitor your Prometheus instance's resource usage.
+</Warning>
+
+## Related Collectors
+
+- [Database Statistics](/collectors/stat-database) - Database-level statistics
+- [Database](/collectors/database) - Database size metrics
+- I/O User Tables Collector - Physical I/O statistics per table (if enabled)
+
+## Troubleshooting
+
+### High Dead Tuple Counts
+
+1. Check autovacuum settings: `SHOW autovacuum;`
+2. Review autovacuum thresholds for specific tables
+3. Consider manual VACUUM for severely bloated tables
+4. Check for long-running transactions blocking vacuum
+
+### Missing Indexes
+
+1. Look for high `seq_scan` on large tables
+2. Use `pg_stat_statements` to identify slow queries
+3. Create indexes on frequently queried columns
+4. Monitor index usage after creation

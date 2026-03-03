@@ -1,0 +1,123 @@
+---
+title: stat-activity-autovacuum
+description: Reference documentation for the stat-activity-autovacuum collector
+---
+
+The `stat_activity_autovacuum` collector monitors currently running autovacuum processes.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.stat-activity-autovacuum`
+
+## Metrics
+
+### pg_stat_activity_autovacuum_timestamp_seconds
+
+**Type:** Gauge  
+**Description:** Start timestamp of the vacuum process in seconds (Unix timestamp)
+
+**Labels:**
+- `relname` - Table name being vacuumed
+
+## SQL Query
+
+```sql
+SELECT
+  SPLIT_PART(query, '.', 2) AS relname,
+  EXTRACT(EPOCH FROM xact_start) AS timestamp_seconds
+FROM
+  pg_catalog.pg_stat_activity
+WHERE
+  query LIKE 'autovacuum:%'
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_catalog.pg_stat_activity` view
+
+## Example Output
+
+```
+pg_stat_activity_autovacuum_timestamp_seconds{relname="users"} 1638360125
+pg_stat_activity_autovacuum_timestamp_seconds{relname="orders"} 1638360200
+```
+
+## Use Cases
+
+### Monitor Autovacuum Duration
+
+Calculate how long autovacuum has been running:
+```promql
+time() - pg_stat_activity_autovacuum_timestamp_seconds
+```
+
+### Alert on Long-Running Autovacuum
+
+```promql
+# Autovacuum running longer than 1 hour
+time() - pg_stat_activity_autovacuum_timestamp_seconds > 3600
+```
+
+### Track Autovacuum Activity
+
+```promql
+# Count of active autovacuum processes
+count(pg_stat_activity_autovacuum_timestamp_seconds)
+```
+
+## Understanding Autovacuum Queries
+
+Autovacuum query format:
+```
+autovacuum: VACUUM public.table_name
+autovacuum: VACUUM ANALYZE public.table_name
+```
+
+The collector extracts the table name using `SPLIT_PART(query, '.', 2)`.
+
+## Troubleshooting
+
+### Check Autovacuum Settings
+
+```sql
+SELECT name, setting, unit 
+FROM pg_settings 
+WHERE name LIKE 'autovacuum%';
+```
+
+### View Autovacuum Activity
+
+```sql
+SELECT 
+  pid,
+  now() - xact_start as duration,
+  query
+FROM pg_stat_activity
+WHERE query LIKE 'autovacuum:%'
+ORDER BY xact_start;
+```
+
+### Why Autovacuum May Run Long
+
+- Large table with many dead tuples
+- Insufficient `maintenance_work_mem`
+- I/O throttling from `autovacuum_vacuum_cost_delay`
+- Waiting for locks
+- Many indexes on the table
+
+## Related Metrics
+
+- `pg_stat_user_tables` - Shows last autovacuum time and counts
+- `pg_stat_progress_vacuum` - Detailed progress of vacuum operations
+
+## Related
+
+- [pg_stat_activity view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW)
+- [Autovacuum documentation](https://www.postgresql.org/docs/current/routine-vacuuming.html#AUTOVACUUM)

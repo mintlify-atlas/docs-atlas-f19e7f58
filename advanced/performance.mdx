@@ -1,0 +1,397 @@
+---
+title: Performance Tuning
+description: Optimize collection timeouts, select collectors, and tune exporter performance
+icon: gauge-high
+---
+
+Optimize the PostgreSQL Server Exporter for your specific monitoring needs by adjusting collection timeouts and selectively enabling collectors.
+
+## Collection Timeout
+
+The collection timeout controls how long the exporter waits for database queries to complete during a scrape.
+
+### Setting the Timeout
+
+<Tabs>
+  <Tab title="Environment Variable">
+    ```bash
+    export PG_EXPORTER_COLLECTION_TIMEOUT="30s"
+    ./postgres_exporter
+    ```
+  </Tab>
+  <Tab title="Command Line Flag">
+    ```bash
+    ./postgres_exporter --collection-timeout=30s
+    ```
+  </Tab>
+  <Tab title="Docker">
+    ```bash
+    docker run \
+      -e PG_EXPORTER_COLLECTION_TIMEOUT="30s" \
+      -e DATA_SOURCE_NAME="postgresql://..." \
+      quay.io/prometheuscommunity/postgres-exporter
+    ```
+  </Tab>
+</Tabs>
+
+### Default Value
+
+The default timeout is **1 minute** (`1m`). This is suitable for most deployments.
+
+### When to Adjust
+
+<AccordionGroup>
+  <Accordion title="Slow Databases">
+    If you see timeout errors in logs, increase the timeout:
+    
+    ```bash
+    PG_EXPORTER_COLLECTION_TIMEOUT="2m"
+    ```
+    
+    Common causes:
+    - High database load
+    - Complex queries in custom collectors
+    - Slow storage subsystem
+    - Large tables without proper indexes
+  </Accordion>
+
+  <Accordion title="Fast Scrapes Required">
+    For frequently scraped instances with fast databases, decrease the timeout:
+    
+    ```bash
+    PG_EXPORTER_COLLECTION_TIMEOUT="15s"
+    ```
+    
+    This prevents connections from stacking up if the database becomes temporarily slow.
+  </Accordion>
+
+  <Accordion title="Connection Pool Exhaustion">
+    Lower timeouts help prevent exhausting the database connection pool:
+    
+    ```bash
+    PG_EXPORTER_COLLECTION_TIMEOUT="30s"
+    ```
+    
+    When queries take too long, connections stack up. The timeout drops connections to free up resources.
+  </Accordion>
+</AccordionGroup>
+
+### How Timeout Works
+
+```go
+// Internal behavior (simplified)
+ctx, cancel := context.WithTimeout(context.Background(), collectionTimeout)
+defer cancel()
+
+// All collector queries run within this timeout
+// When timeout is reached, database connection is dropped
+```
+
+When the timeout is reached:
+1. All running collector queries are canceled
+2. The database connection is closed
+3. Partial metrics collected before timeout are still exported
+4. Collectors that didn't complete will report failures
+
+<Warning>
+  Timeout values less than `1ms` are invalid and will cause an error.
+</Warning>
+
+## Collector Selection
+
+The exporter includes many collectors, but you may not need all of them. Disable unnecessary collectors to improve performance.
+
+### Default Collectors
+
+These collectors are **enabled by default**:
+
+| Collector | Metrics | Impact |
+|-----------|---------|--------|
+| `database` | Database-level statistics | Low |
+| `locks` | Lock information | Medium |
+| `replication` | Replication status | Low |
+| `replication_slot` | Replication slot details | Low |
+| `stat_bgwriter` | Background writer stats | Low |
+| `stat_database` | Database statistics | Low |
+| `stat_progress_vacuum` | Vacuum progress | Low |
+| `stat_user_tables` | User table statistics | Medium-High |
+| `statio_user_tables` | Table I/O statistics | Medium-High |
+| `wal` | WAL statistics | Low |
+
+### Disabled by Default
+
+These collectors are **disabled by default** due to performance impact or specialized use:
+
+| Collector | Purpose | When to Enable |
+|-----------|---------|----------------|
+| `database_wraparound` | Transaction ID wraparound | If you need wraparound monitoring |
+| `long_running_transactions` | Transactions exceeding threshold | To monitor slow queries |
+| `postmaster` | Postmaster process info | For detailed server monitoring |
+| `process_idle` | Idle connection info | To monitor connection pool usage |
+| `stat_activity_autovacuum` | Autovacuum activity | For vacuum tuning |
+| `stat_checkpointer` | Checkpoint statistics | For write performance tuning |
+| `stat_statements` | Query-level statistics | For query performance analysis (HIGH IMPACT) |
+| `stat_wal_receiver` | WAL receiver stats (standby) | On replica servers |
+| `statio_user_indexes` | Index I/O statistics | For index performance analysis |
+| `xlog_location` | Transaction log position | Advanced replication monitoring |
+
+### Enabling/Disabling Collectors
+
+<Tabs>
+  <Tab title="Command Line">
+    ```bash
+    # Enable a disabled collector
+    ./postgres_exporter --collector.stat_statements
+    
+    # Disable an enabled collector
+    ./postgres_exporter --no-collector.locks
+    
+    # Enable multiple collectors
+    ./postgres_exporter \
+      --collector.stat_statements \
+      --collector.database_wraparound \
+      --no-collector.stat_user_tables
+    ```
+  </Tab>
+  <Tab title="Docker">
+    ```bash
+    docker run \
+      -e DATA_SOURCE_NAME="postgresql://..." \
+      quay.io/prometheuscommunity/postgres-exporter \
+      --collector.stat_statements \
+      --no-collector.locks
+    ```
+  </Tab>
+</Tabs>
+
+### Performance-Focused Configuration
+
+For high-frequency scraping or large databases:
+
+```bash
+./postgres_exporter \
+  --collection-timeout=15s \
+  --no-collector.stat_user_tables \
+  --no-collector.statio_user_tables \
+  --no-collector.locks
+```
+
+This disables the most expensive collectors that scan all user tables.
+
+### Deep Monitoring Configuration
+
+For detailed performance analysis:
+
+```bash
+./postgres_exporter \
+  --collection-timeout=2m \
+  --collector.stat_statements \
+  --collector.long_running_transactions \
+  --collector.database_wraparound \
+  --collector.statio_user_indexes
+```
+
+<Warning>
+  The `stat_statements` collector can have significant performance impact on high-traffic databases. Enable only when needed.
+</Warning>
+
+## Query Performance (stat_statements)
+
+The `pg_stat_statements` collector provides query-level metrics but requires additional configuration.
+
+### Configuring stat_statements Collector
+
+```bash
+# Enable the collector
+./postgres_exporter --collector.stat_statements
+
+# Limit number of queries returned (default: 100)
+./postgres_exporter \
+  --collector.stat_statements \
+  --collector.stat_statements.limit=50
+
+# Limit query text length (default: 120)
+./postgres_exporter \
+  --collector.stat_statements \
+  --collector.stat_statements.query_length=80
+
+# Include full query text with queryId
+./postgres_exporter \
+  --collector.stat_statements \
+  --collector.stat_statements.include_query
+```
+
+### Excluding Databases or Users
+
+```bash
+# Exclude specific databases
+./postgres_exporter \
+  --collector.stat_statements \
+  --collector.stat_statements.exclude_databases=template0,template1
+
+# Exclude specific users
+./postgres_exporter \
+  --collector.stat_statements \
+  --collector.stat_statements.exclude_users=backup_user,reporting_user
+```
+
+### PostgreSQL Configuration
+
+Enable the extension in PostgreSQL:
+
+```sql
+-- Add to postgresql.conf
+shared_preload_libraries = 'pg_stat_statements'
+
+-- Restart PostgreSQL, then create extension
+CREATE EXTENSION pg_stat_statements;
+```
+
+## Optimizing Scrape Interval
+
+Match your Prometheus scrape interval to your monitoring needs.
+
+### Recommended Intervals
+
+```yaml
+scrape_configs:
+  - job_name: 'postgres'
+    # Standard monitoring
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ['localhost:9187']
+  
+  - job_name: 'postgres-detailed'
+    # Detailed monitoring with expensive collectors
+    scrape_interval: 60s
+    scrape_timeout: 50s
+    params:
+      collect: ['stat_statements']
+    static_configs:
+      - targets: ['localhost:9187']
+```
+
+<Tip>
+  Set `scrape_timeout` slightly lower than `scrape_interval` to prevent scrapes from overlapping.
+</Tip>
+
+## Disabling Default Metrics
+
+For minimal resource usage or specialized monitoring:
+
+```bash
+# Disable all built-in metrics
+export PG_EXPORTER_DISABLE_DEFAULT_METRICS="true"
+export PG_EXPORTER_EXTEND_QUERY_PATH="/path/to/queries.yaml"
+./postgres_exporter
+```
+
+This mode:
+- Removes all built-in collectors
+- Uses only custom queries from `queries.yaml`
+- Useful for Greenplum, legacy PostgreSQL versions, or custom monitoring
+
+<Warning>
+  When `disable-default-metrics` is true, you must provide a custom queries file. The exporter will return no database metrics otherwise.
+</Warning>
+
+## Monitoring Exporter Performance
+
+The exporter exposes its own metrics:
+
+```bash
+curl http://localhost:9187/metrics | grep postgres_exporter
+```
+
+Key metrics:
+
+```promql
+# Scrape duration per collector
+pg_scrape_collector_duration_seconds
+
+# Collector success/failure
+pg_scrape_collector_success
+
+# Config reload status
+postgres_exporter_config_last_reload_successful
+postgres_exporter_config_last_reload_success_timestamp_seconds
+```
+
+## Resource Limits
+
+Set resource limits for containerized deployments:
+
+```yaml
+# Kubernetes
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+```
+
+```bash
+# Docker
+docker run \
+  --memory=256m \
+  --cpus=0.5 \
+  quay.io/prometheuscommunity/postgres-exporter
+```
+
+## Performance Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="High Scrape Duration">
+    **Symptoms**: Scrapes taking longer than expected
+    
+    **Solutions**:
+    1. Check `pg_scrape_collector_duration_seconds` to identify slow collectors
+    2. Disable expensive collectors like `stat_user_tables`
+    3. Increase `collection-timeout` if queries are timing out
+    4. Reduce `stat_statements.limit` if using that collector
+  </Accordion>
+
+  <Accordion title="High Memory Usage">
+    **Symptoms**: Exporter consuming excessive memory
+    
+    **Solutions**:
+    1. Disable `stat_statements` collector
+    2. Reduce `stat_statements.limit` and `query_length`
+    3. Disable table-level collectors for databases with many tables
+    4. Increase scrape interval to reduce collection frequency
+  </Accordion>
+
+  <Accordion title="Database Connection Pool Exhaustion">
+    **Symptoms**: "too many connections" errors in PostgreSQL
+    
+    **Solutions**:
+    1. Lower `collection-timeout` to drop slow connections faster
+    2. Increase PostgreSQL `max_connections`
+    3. Reduce Prometheus scrape frequency
+    4. Use multi-target mode carefully (each scrape = new connection)
+  </Accordion>
+
+  <Accordion title="Collector Failures">
+    **Symptoms**: `pg_scrape_collector_success{collector="..."}` is 0
+    
+    **Solutions**:
+    1. Check exporter logs for error messages
+    2. Verify database user has necessary permissions
+    3. Ensure required extensions (e.g., pg_stat_statements) are installed
+    4. Check PostgreSQL version compatibility
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/advanced/troubleshooting">
+    Resolve common issues and errors
+  </Card>
+  <Card title="Security Best Practices" icon="shield" href="/advanced/security">
+    Secure your monitoring setup
+  </Card>
+</CardGroup>

@@ -1,0 +1,302 @@
+---
+title: stat-statements
+description: Reference documentation for the stat-statements collector
+---
+
+The `stat_statements` collector exposes query performance statistics from the `pg_stat_statements` extension.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.stat-statements`
+
+<Warning>
+This collector is disabled by default because it can be expensive on busy servers. Every unique query creates a new time series, which can significantly increase cardinality.
+</Warning>
+
+## Prerequisites
+
+The `pg_stat_statements` extension must be installed and configured:
+
+```sql
+CREATE EXTENSION pg_stat_statements;
+```
+
+Add to `postgresql.conf`:
+```
+shared_preload_libraries = 'pg_stat_statements'
+pg_stat_statements.track = all
+```
+
+## Metrics
+
+### pg_stat_statements_calls_total
+
+**Type:** Counter  
+**Description:** Number of times the statement has been executed
+
+**Labels:**
+- `user` - Database user
+- `datname` - Database name
+- `queryid` - Query identifier hash
+
+### pg_stat_statements_seconds_total
+
+**Type:** Counter  
+**Description:** Total time spent executing the statement, in seconds
+
+**Labels:** `user`, `datname`, `queryid`
+
+### pg_stat_statements_rows_total
+
+**Type:** Counter  
+**Description:** Total number of rows retrieved or affected by the statement
+
+**Labels:** `user`, `datname`, `queryid`
+
+### pg_stat_statements_block_read_seconds_total
+
+**Type:** Counter  
+**Description:** Total time spent reading blocks, in seconds
+
+**Labels:** `user`, `datname`, `queryid`
+
+**Note:** Requires `track_io_timing = on`
+
+### pg_stat_statements_block_write_seconds_total
+
+**Type:** Counter  
+**Description:** Total time spent writing blocks, in seconds
+
+**Labels:** `user`, `datname`, `queryid`
+
+**Note:** Requires `track_io_timing = on`
+
+### pg_stat_statements_query_id
+
+**Type:** Counter  
+**Description:** Mapping of queryid to query text (when `--collector.stat-statements.include_query` is enabled)
+
+**Labels:**
+- `queryid` - Query identifier
+- `query` - Query text (truncated)
+
+## Configuration Flags
+
+### --collector.stat-statements.include_query
+
+**Default:** `false`  
+**Description:** Include actual query text in metrics
+
+When enabled, exports the `pg_stat_statements_query_id` metric with query text.
+
+### --collector.stat-statements.query_length
+
+**Default:** `120`  
+**Description:** Maximum length of query text to include
+
+Query text is truncated to this length to limit label cardinality.
+
+### --collector.stat-statements.limit
+
+**Default:** `100`  
+**Description:** Maximum number of statements to return
+
+Limits the number of queries exported to control cardinality.
+
+### --collector.stat-statements.exclude_databases
+
+**Default:** `` (none)  
+**Description:** Comma-separated list of databases to exclude
+
+Example: `--collector.stat-statements.exclude_databases="postgres,template0"`
+
+### --collector.stat-statements.exclude_users
+
+**Default:** `` (none)  
+**Description:** Comma-separated list of users to exclude
+
+Example: `--collector.stat-statements.exclude_users="postgres,monitoring"`
+
+## SQL Queries
+
+The collector uses different queries based on PostgreSQL version.
+
+**PostgreSQL 17+:**
+```sql
+SELECT
+  pg_get_userbyid(userid) as user,
+  pg_database.datname,
+  pg_stat_statements.queryid,
+  pg_stat_statements.calls as calls_total,
+  pg_stat_statements.total_exec_time / 1000.0 as seconds_total,
+  pg_stat_statements.rows as rows_total,
+  pg_stat_statements.shared_blk_read_time / 1000.0 as block_read_seconds_total,
+  pg_stat_statements.shared_blk_write_time / 1000.0 as block_write_seconds_total
+FROM pg_stat_statements(true)
+JOIN pg_database ON pg_database.oid = pg_stat_statements.dbid
+WHERE total_exec_time > (
+  SELECT percentile_cont(0.1) WITHIN GROUP (ORDER BY total_exec_time)
+  FROM pg_stat_statements(false)
+)
+ORDER BY seconds_total DESC
+LIMIT 100;
+```
+
+**PostgreSQL 13-16:**
+```sql
+-- Similar to above, but uses blk_read_time/blk_write_time instead of shared_blk_*
+```
+
+**PostgreSQL less than  13:**
+```sql
+-- Uses total_time instead of total_exec_time
+```
+
+## Filtering Strategy
+
+The collector only exports queries in the **top 90th percentile** by execution time:
+```sql
+WHERE total_exec_time > (
+  SELECT percentile_cont(0.1) WITHIN GROUP (ORDER BY total_exec_time)
+  FROM pg_stat_statements(false)
+)
+```
+
+This limits cardinality by focusing on the most impactful queries.
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 9.4+ (with `pg_stat_statements` extension)
+
+**Version-specific changes:**
+- **PostgreSQL 13+:** Uses `total_exec_time` instead of `total_time`
+- **PostgreSQL 17+:** Uses `shared_blk_read_time` and `shared_blk_write_time`
+
+## Required Permissions
+
+The monitoring user needs:
+- `pg_stat_statements` extension installed
+- Execute permission on `pg_stat_statements()` function
+- Access to `pg_database` catalog
+
+## Example Output
+
+```
+pg_stat_statements_calls_total{user="app",datname="mydb",queryid="12345"} 125000
+pg_stat_statements_seconds_total{user="app",datname="mydb",queryid="12345"} 45.23
+pg_stat_statements_rows_total{user="app",datname="mydb",queryid="12345"} 500000
+pg_stat_statements_block_read_seconds_total{user="app",datname="mydb",queryid="12345"} 2.5
+pg_stat_statements_block_write_seconds_total{user="app",datname="mydb",queryid="12345"} 0.1
+pg_stat_statements_query_id{queryid="12345",query="SELECT * FROM users WHERE id = $1"} 1
+```
+
+## Use Cases
+
+### Identify Slow Queries
+
+```promql
+# Average execution time per query
+rate(pg_stat_statements_seconds_total[5m]) / 
+rate(pg_stat_statements_calls_total[5m])
+
+# Queries with high total time
+topk(10, rate(pg_stat_statements_seconds_total[5m]))
+```
+
+### Query Call Frequency
+
+```promql
+# Most frequently called queries
+topk(10, rate(pg_stat_statements_calls_total[5m]))
+```
+
+### I/O-Heavy Queries
+
+```promql
+# Queries spending most time on I/O
+topk(10, 
+  rate(pg_stat_statements_block_read_seconds_total[5m]) +
+  rate(pg_stat_statements_block_write_seconds_total[5m])
+)
+```
+
+### Rows per Query
+
+```promql
+# Average rows returned per execution
+rate(pg_stat_statements_rows_total[5m]) /
+rate(pg_stat_statements_calls_total[5m])
+```
+
+## Performance Considerations
+
+### Cardinality Impact
+
+Each unique query creates separate time series for each metric. On a busy server with many unique queries, this can create millions of time series.
+
+**Mitigation strategies:**
+1. Use `--collector.stat-statements.limit` to cap exported queries
+2. Use `--collector.stat-statements.exclude_databases` for system databases
+3. Only enable on staging/development initially
+4. The collector already filters to top 90th percentile
+
+### Query Text Storage
+
+When using `--collector.stat-statements.include_query`:
+- Query text is stored as a label
+- Increases metric size significantly
+- Use `--collector.stat-statements.query_length` to limit size
+- Consider if you really need query text (queryid may be sufficient)
+
+## Troubleshooting
+
+### Extension Not Available
+
+If the collector fails:
+```sql
+-- Check if extension is installed
+SELECT * FROM pg_extension WHERE extname = 'pg_stat_statements';
+
+-- Install if missing
+CREATE EXTENSION pg_stat_statements;
+```
+
+### No Data Collected
+
+Check PostgreSQL configuration:
+```sql
+SHOW shared_preload_libraries;  -- Should include pg_stat_statements
+SHOW pg_stat_statements.track;   -- Should be 'all' or 'top'
+```
+
+### Reset Statistics
+
+```sql
+SELECT pg_stat_statements_reset();
+```
+
+## Alert Examples
+
+```yaml
+- alert: SlowQueryDetected
+  expr: |
+    rate(pg_stat_statements_seconds_total[5m]) /
+    rate(pg_stat_statements_calls_total[5m]) > 1
+  annotations:
+    summary: "Query taking >1 second on average"
+    description: "Query {{ $labels.queryid }} averaging {{ $value }}s per execution"
+
+- alert: HighQueryIOTime
+  expr: |
+    (rate(pg_stat_statements_block_read_seconds_total[5m]) +
+     rate(pg_stat_statements_block_write_seconds_total[5m])) > 10
+  annotations:
+    summary: "Query spending excessive time on I/O"
+```
+
+## Related
+
+- [pg_stat_statements documentation](https://www.postgresql.org/docs/current/pgstatstatements.html)
+- [Query optimization guide](https://www.postgresql.org/docs/current/performance-tips.html)

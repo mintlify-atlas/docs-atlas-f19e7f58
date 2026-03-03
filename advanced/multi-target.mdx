@@ -1,0 +1,183 @@
+---
+title: Multi-target Support
+description: Monitor multiple PostgreSQL instances from a single exporter using the probe endpoint
+icon: target
+---
+
+<Warning>
+  Multi-target support is currently in **BETA** and may require changes in future releases. Feedback is welcome.
+</Warning>
+
+The PostgreSQL Server Exporter supports the [multi-target pattern](https://prometheus.io/docs/guides/multi-target-exporter/), allowing you to monitor multiple PostgreSQL instances from a single exporter instance.
+
+## When to Use Multi-target
+
+Multi-target functionality is **optional** and intended for specific use cases:
+
+- Monitoring SaaS-managed PostgreSQL services where you cannot install the exporter as a sidecar
+- Centralized monitoring of many PostgreSQL instances
+- Dynamic PostgreSQL targets that change frequently
+
+For most deployments, running the exporter as a sidecar (one per PostgreSQL instance) is simpler and recommended.
+
+## How It Works
+
+Instead of configuring a single data source via environment variables, the exporter exposes a `/probe` endpoint that accepts target information as URL parameters.
+
+### Basic Usage
+
+Send HTTP requests to the `/probe` endpoint with the target DSN:
+
+```bash
+curl "http://localhost:9187/probe?target=postgres-server1:5432"
+```
+
+The `target` parameter should contain the DSN (Data Source Name) of the PostgreSQL instance to scrape.
+
+## Authentication Modules
+
+To avoid putting sensitive credentials in URLs, configure authentication modules in the exporter's configuration file.
+
+### Configuration File
+
+Create a `postgres_exporter.yml` file with auth module definitions:
+
+```yaml
+auth_modules:
+  production:
+    type: userpass
+    userpass:
+      username: postgres_exporter
+      password: your_secure_password
+    options:
+      sslmode: require
+      connect_timeout: "10"
+  
+  development:
+    type: userpass
+    userpass:
+      username: dev_monitor
+      password: dev_password
+    options:
+      sslmode: disable
+```
+
+### Using Auth Modules
+
+Reference the auth module in the probe request:
+
+```bash
+curl "http://localhost:9187/probe?target=server1:5432&auth_module=production"
+```
+
+The exporter will:
+1. Look up the `production` auth module
+2. Apply the username and password
+3. Add any configured options to the DSN
+4. Connect to `server1:5432` and collect metrics
+
+## Prometheus Configuration
+
+Configure Prometheus to scrape multiple targets through the exporter using relabeling:
+
+```yaml
+scrape_configs:
+  - job_name: 'postgres'
+    static_configs:
+      - targets:
+        - server1:5432
+        - server2:5432
+        - server3:5432
+    metrics_path: /probe
+    params:
+      auth_module: [production]
+    relabel_configs:
+      # Pass the target as a URL parameter
+      - source_labels: [__address__]
+        target_label: __param_target
+      # Use the target as the instance label
+      - source_labels: [__param_target]
+        target_label: instance
+      # Replace the scrape address with the exporter's address
+      - target_label: __address__
+        replacement: localhost:9187
+```
+
+### How Relabeling Works
+
+1. **First relabel**: Takes the target address (e.g., `server1:5432`) and sets it as the `target` URL parameter
+2. **Second relabel**: Copies the target to the `instance` label so metrics show the correct PostgreSQL instance
+3. **Third relabel**: Changes the scrape address to the exporter's actual location
+
+### Multiple Environments
+
+You can scrape different PostgreSQL environments with different auth modules:
+
+```yaml
+scrape_configs:
+  - job_name: 'postgres-prod'
+    static_configs:
+      - targets:
+        - prod-db1:5432
+        - prod-db2:5432
+    metrics_path: /probe
+    params:
+      auth_module: [production]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9187
+
+  - job_name: 'postgres-dev'
+    static_configs:
+      - targets:
+        - dev-db1:5432
+    metrics_path: /probe
+    params:
+      auth_module: [development]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9187
+```
+
+## Starting the Exporter
+
+Start the exporter with the configuration file:
+
+```bash
+./postgres_exporter --config.file=postgres_exporter.yml
+```
+
+Or with Docker:
+
+```bash
+docker run -p 9187:9187 \
+  -v $(pwd)/postgres_exporter.yml:/etc/postgres_exporter.yml \
+  quay.io/prometheuscommunity/postgres-exporter \
+  --config.file=/etc/postgres_exporter.yml
+```
+
+## Limitations
+
+- Currently, only `userpass` authentication type is supported
+- Each scrape creates a new connection to the target database
+- Connection pooling is not available in multi-target mode
+- See the [Performance Tuning](/advanced/performance) guide for optimization tips
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security Best Practices" icon="shield" href="/advanced/security">
+    Learn how to secure your exporter deployment
+  </Card>
+  <Card title="Performance Tuning" icon="gauge" href="/advanced/performance">
+    Optimize collection timeouts and collector selection
+  </Card>
+</CardGroup>

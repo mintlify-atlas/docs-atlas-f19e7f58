@@ -1,0 +1,666 @@
+---
+title: Troubleshooting
+description: Resolve common issues with connection problems, missing metrics, and permission errors
+icon: screwdriver-wrench
+---
+
+This guide helps you diagnose and resolve common issues with the PostgreSQL Server Exporter.
+
+## Connection Issues
+
+<AccordionGroup>
+  <Accordion title="Connection refused" icon="xmark">
+    **Error Message**:
+    ```
+    Error opening connection to database: dial tcp 127.0.0.1:5432: connect: connection refused
+    ```
+
+    **Causes**:
+    - PostgreSQL is not running
+    - Wrong hostname or port
+    - PostgreSQL not listening on the specified interface
+
+    **Solutions**:
+
+    1. **Verify PostgreSQL is running**:
+       ```bash
+       # Linux
+       sudo systemctl status postgresql
+       
+       # Check if PostgreSQL is listening
+       sudo ss -tulpn | grep 5432
+       ```
+
+    2. **Check connection string**:
+       ```bash
+       # Test connection with psql
+       psql "postgresql://username:password@hostname:5432/dbname"
+       ```
+
+    3. **Check PostgreSQL listen address**:
+       ```bash
+       # In postgresql.conf
+       listen_addresses = 'localhost'  # Change to '*' or specific IP
+       ```
+
+    4. **Docker networking**:
+       ```bash
+       # If PostgreSQL is in Docker, use container name or correct network
+       docker run --net=host ...  # or
+       docker run --net=postgres_network ...
+       ```
+  </Accordion>
+
+  <Accordion title="Authentication failed" icon="key">
+    **Error Message**:
+    ```
+    pq: password authentication failed for user "postgres_exporter"
+    ```
+
+    **Causes**:
+    - Wrong username or password
+    - User doesn't exist
+    - `pg_hba.conf` doesn't allow the connection
+
+    **Solutions**:
+
+    1. **Verify credentials**:
+       ```bash
+       # Test with psql
+       psql -U postgres_exporter -h hostname -d postgres
+       ```
+
+    2. **Check pg_hba.conf**:
+       ```bash
+       # Add this line to allow password authentication
+       host    all    postgres_exporter    0.0.0.0/0    md5
+       
+       # Reload PostgreSQL
+       sudo systemctl reload postgresql
+       ```
+
+    3. **Create user if missing**:
+       ```sql
+       CREATE USER postgres_exporter WITH PASSWORD 'your_password';
+       GRANT pg_monitor TO postgres_exporter;
+       GRANT CONNECT ON DATABASE postgres TO postgres_exporter;
+       ```
+
+    4. **Special characters in password**:
+       ```bash
+       # URL-encode special characters
+       # Password: pass@word#123 becomes pass%40word%23123
+       DATA_SOURCE_NAME="postgresql://user:pass%40word%23123@host:5432/db"
+       ```
+  </Accordion>
+
+  <Accordion title="SSL/TLS errors" icon="lock">
+    **Error Message**:
+    ```
+    pq: SSL is not enabled on the server
+    ```
+    or
+    ```
+    x509: certificate signed by unknown authority
+    ```
+
+    **Solutions**:
+
+    1. **Disable SSL for local testing**:
+       ```bash
+       DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable"
+       ```
+
+    2. **Enable SSL in PostgreSQL**:
+       ```bash
+       # In postgresql.conf
+       ssl = on
+       ssl_cert_file = '/path/to/server.crt'
+       ssl_key_file = '/path/to/server.key'
+       ```
+
+    3. **Trust server certificate**:
+       ```bash
+       DATA_SOURCE_URI="host:5432/postgres?sslmode=require"
+       ```
+
+    4. **Verify CA certificate**:
+       ```bash
+       DATA_SOURCE_URI="host:5432/postgres?sslmode=verify-ca&sslrootcert=/path/to/ca.crt"
+       ```
+
+    5. **Skip verification (not recommended for production)**:
+       ```bash
+       DATA_SOURCE_URI="host:5432/postgres?sslmode=require"
+       ```
+  </Accordion>
+
+  <Accordion title="Timeout errors" icon="clock">
+    **Error Message**:
+    ```
+    context deadline exceeded
+    ```
+
+    **Causes**:
+    - Database is slow to respond
+    - Collection timeout too short
+    - Heavy load on database
+
+    **Solutions**:
+
+    1. **Increase collection timeout**:
+       ```bash
+       export PG_EXPORTER_COLLECTION_TIMEOUT="2m"
+       ./postgres_exporter
+       ```
+
+    2. **Increase connection timeout**:
+       ```bash
+       DATA_SOURCE_URI="host:5432/postgres?connect_timeout=10"
+       ```
+
+    3. **Check database performance**:
+       ```sql
+       -- Check for long-running queries
+       SELECT pid, now() - query_start as duration, query
+       FROM pg_stat_activity
+       WHERE state = 'active'
+       ORDER BY duration DESC;
+       ```
+
+    4. **Disable slow collectors**:
+       ```bash
+       ./postgres_exporter \
+         --no-collector.stat_user_tables \
+         --no-collector.statio_user_tables
+       ```
+  </Accordion>
+
+  <Accordion title="Too many connections" icon="users">
+    **Error Message**:
+    ```
+    pq: sorry, too many clients already
+    ```
+
+    **Causes**:
+    - PostgreSQL connection limit reached
+    - Connections not being closed properly
+    - Too many concurrent scrapes
+
+    **Solutions**:
+
+    1. **Increase PostgreSQL max_connections**:
+       ```bash
+       # In postgresql.conf
+       max_connections = 200
+       ```
+
+    2. **Lower collection timeout**:
+       ```bash
+       # Connections dropped faster
+       export PG_EXPORTER_COLLECTION_TIMEOUT="30s"
+       ```
+
+    3. **Check current connections**:
+       ```sql
+       SELECT count(*) FROM pg_stat_activity;
+       SELECT * FROM pg_stat_activity WHERE usename = 'postgres_exporter';
+       ```
+
+    4. **Increase scrape interval in Prometheus**:
+       ```yaml
+       scrape_configs:
+         - job_name: postgres
+           scrape_interval: 60s  # Reduce frequency
+       ```
+  </Accordion>
+</AccordionGroup>
+
+## Metrics Issues
+
+<AccordionGroup>
+  <Accordion title="No metrics returned" icon="chart-line">
+    **Symptoms**: `/metrics` endpoint returns only exporter internal metrics
+
+    **Solutions**:
+
+    1. **Check exporter logs**:
+       ```bash
+       ./postgres_exporter --log.level=debug
+       ```
+
+    2. **Verify DATA_SOURCE_NAME**:
+       ```bash
+       echo $DATA_SOURCE_NAME
+       # Should be a valid PostgreSQL connection string
+       ```
+
+    3. **Test connection manually**:
+       ```bash
+       psql "$DATA_SOURCE_NAME"
+       ```
+
+    4. **Check if disable-default-metrics is set**:
+       ```bash
+       # This disables all built-in metrics
+       unset PG_EXPORTER_DISABLE_DEFAULT_METRICS
+       ```
+  </Accordion>
+
+  <Accordion title="Missing specific metrics" icon="magnifying-glass-chart">
+    **Symptoms**: Some expected metrics are not present
+
+    **Causes**:
+    - Collector is disabled
+    - Insufficient permissions
+    - PostgreSQL version incompatibility
+
+    **Solutions**:
+
+    1. **Check collector status**:
+       ```bash
+       # Look for scrape_collector_success metrics
+       curl localhost:9187/metrics | grep scrape_collector_success
+       ```
+
+    2. **Enable the collector**:
+       ```bash
+       # Example: enable pg_stat_statements
+       ./postgres_exporter --collector.stat_statements
+       ```
+
+    3. **Check permissions**:
+       ```sql
+       -- Verify user has pg_monitor role
+       SELECT * FROM pg_roles WHERE rolname = 'postgres_exporter';
+       
+       -- Check specific table permissions
+       SELECT * FROM information_schema.table_privileges 
+       WHERE grantee = 'postgres_exporter';
+       ```
+
+    4. **Install required extensions**:
+       ```sql
+       -- For pg_stat_statements metrics
+       CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+       ```
+  </Accordion>
+
+  <Accordion title="Collector failures" icon="triangle-exclamation">
+    **Symptoms**: `pg_scrape_collector_success` is 0 for some collectors
+
+    **Check logs**:
+    ```bash
+    ./postgres_exporter --log.level=debug 2>&1 | grep "collector failed"
+    ```
+
+    **Common failures**:
+
+    - **pg_stat_statements**: Extension not installed or loaded
+      ```sql
+      -- Check if extension exists
+      SELECT * FROM pg_extension WHERE extname = 'pg_stat_statements';
+      
+      -- Check postgresql.conf
+      -- shared_preload_libraries = 'pg_stat_statements'
+      ```
+
+    - **replication**: User lacks replication permissions
+      ```sql
+      -- Grant replication monitoring
+      GRANT pg_monitor TO postgres_exporter;
+      ```
+
+    - **stat_user_tables**: Permission denied on user tables
+      ```sql
+      -- For PostgreSQL 10+
+      GRANT pg_monitor TO postgres_exporter;
+      ```
+  </Accordion>
+
+  <Accordion title="Metrics have wrong values" icon="gauge">
+    **Symptoms**: Metrics exist but show unexpected values
+
+    **Troubleshooting steps**:
+
+    1. **Query PostgreSQL directly**:
+       ```sql
+       -- Compare with what PostgreSQL reports
+       SELECT * FROM pg_stat_database WHERE datname = 'your_database';
+       ```
+
+    2. **Check metric labels**:
+       ```bash
+       # Ensure you're looking at the right instance/database
+       curl localhost:9187/metrics | grep 'pg_stat_database_.*{datname="postgres"}'
+       ```
+
+    3. **Verify scrape timing**:
+       ```yaml
+       # Prometheus config
+       scrape_interval: 30s
+       # Counters show rate, not absolute values in Prometheus
+       ```
+
+    4. **Check for multiple exporters**:
+       ```bash
+       # Ensure no duplicate exporters for same target
+       curl localhost:9187/metrics | grep pg_up
+       ```
+  </Accordion>
+</AccordionGroup>
+
+## Permission Errors
+
+<AccordionGroup>
+  <Accordion title="Permission denied on pg_stat_*" icon="ban">
+    **Error Message**:
+    ```
+    ERROR: permission denied for table pg_stat_replication
+    ```
+
+    **Solutions**:
+
+    1. **Grant pg_monitor role (PostgreSQL 10+)**:
+       ```sql
+       GRANT pg_monitor TO postgres_exporter;
+       ```
+
+    2. **Create security definer functions (PostgreSQL 9.x)**:
+       ```sql
+       -- See Security Best Practices guide for full script
+       CREATE OR REPLACE FUNCTION get_pg_stat_activity() 
+       RETURNS SETOF pg_stat_activity AS
+       $$ SELECT * FROM pg_catalog.pg_stat_activity; $$
+       LANGUAGE sql VOLATILE SECURITY DEFINER;
+       ```
+
+    3. **Verify role membership**:
+       ```sql
+       SELECT r.rolname, m.rolname as member
+       FROM pg_roles r
+       JOIN pg_auth_members a ON r.oid = a.roleid
+       JOIN pg_roles m ON a.member = m.oid
+       WHERE m.rolname = 'postgres_exporter';
+       ```
+  </Accordion>
+
+  <Accordion title="Cannot read password file" icon="file">
+    **Error Message**:
+    ```
+    Error reading password file: permission denied
+    ```
+
+    **Solutions**:
+
+    1. **Fix file permissions**:
+       ```bash
+       chmod 600 /path/to/password/file
+       chown exporter-user:exporter-group /path/to/password/file
+       ```
+
+    2. **Docker container permissions**:
+       ```bash
+       # Container runs as uid:gid 65534:65534
+       chown 65534:65534 /path/to/password/file
+       chmod 400 /path/to/password/file
+       ```
+
+    3. **Kubernetes volume permissions**:
+       ```yaml
+       securityContext:
+         fsGroup: 65534
+       volumes:
+         - name: password
+           secret:
+             secretName: postgres-password
+             defaultMode: 0400
+       ```
+  </Accordion>
+</AccordionGroup>
+
+## Multi-target Issues
+
+<AccordionGroup>
+  <Accordion title="Auth module not found" icon="key">
+    **Error Message**:
+    ```
+    auth_module 'production' not found
+    ```
+
+    **Solutions**:
+
+    1. **Check config file is loaded**:
+       ```bash
+       ./postgres_exporter --config.file=postgres_exporter.yml
+       ```
+
+    2. **Verify config file syntax**:
+       ```yaml
+       auth_modules:
+         production:  # Must match parameter exactly
+           type: userpass
+           userpass:
+             username: user
+             password: pass
+       ```
+
+    3. **Check config reload status**:
+       ```bash
+       curl localhost:9187/metrics | grep config_last_reload
+       ```
+
+    4. **Validate YAML**:
+       ```bash
+       # Install yamllint
+       yamllint postgres_exporter.yml
+       ```
+  </Accordion>
+
+  <Accordion title="Target parameter missing" icon="bullseye">
+    **Error Message**:
+    ```
+    target is required
+    ```
+
+    **Solution**:
+    
+    Ensure Prometheus relabeling is correct:
+    ```yaml
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9187
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Docker-Specific Issues
+
+<AccordionGroup>
+  <Accordion title="Container can't connect to host PostgreSQL" icon="docker">
+    **Solutions**:
+
+    1. **Use host networking**:
+       ```bash
+       docker run --net=host ...
+       ```
+
+    2. **Use host.docker.internal (Mac/Windows)**:
+       ```bash
+       -e DATA_SOURCE_URI="host.docker.internal:5432/postgres"
+       ```
+
+    3. **Use Docker network**:
+       ```bash
+       docker network create monitoring
+       docker run --network monitoring --name postgres postgres
+       docker run --network monitoring \
+         -e DATA_SOURCE_URI="postgres:5432/postgres" \
+         postgres-exporter
+       ```
+
+    4. **Use host IP (Linux)**:
+       ```bash
+       # Find host IP
+       ip addr show docker0
+       
+       # Use that IP
+       -e DATA_SOURCE_URI="172.17.0.1:5432/postgres"
+       ```
+  </Accordion>
+
+  <Accordion title="Environment variables not working" icon="gear">
+    **Symptoms**: Container ignores DATA_SOURCE_NAME or other env vars
+
+    **Solutions**:
+
+    1. **Check variable names**:
+       ```bash
+       # Correct
+       -e DATA_SOURCE_URI="..."
+       -e DATA_SOURCE_USER="..."
+       -e DATA_SOURCE_PASS="..."
+       
+       # NOT datasource, data_source, etc.
+       ```
+
+    2. **Quote values properly**:
+       ```bash
+       # Wrong - shell expands
+       -e DATA_SOURCE_PASS=$PASSWORD
+       
+       # Correct
+       -e DATA_SOURCE_PASS="$PASSWORD"
+       ```
+
+    3. **Use env file**:
+       ```bash
+       # .env file
+       DATA_SOURCE_URI=localhost:5432/postgres
+       DATA_SOURCE_USER=postgres_exporter
+       DATA_SOURCE_PASS=password
+       
+       # Run with
+       docker run --env-file .env postgres-exporter
+       ```
+  </Accordion>
+</AccordionGroup>
+
+## Debugging Tips
+
+### Enable Debug Logging
+
+```bash
+./postgres_exporter --log.level=debug --log.format=logfmt
+```
+
+Debug logs show:
+- Connection attempts
+- Collector execution
+- Query durations
+- Error details
+
+### Check Exporter Health
+
+```bash
+# Metrics endpoint should respond
+curl -v http://localhost:9187/metrics
+
+# Check up metric
+curl -s http://localhost:9187/metrics | grep pg_up
+# pg_up 1 means connected
+# pg_up 0 means connection failed
+```
+
+### Test with psql
+
+Always verify the connection string works with psql:
+
+```bash
+# Extract connection string from exporter config
+psql "$DATA_SOURCE_NAME"
+
+# Or construct from parts
+psql -h hostname -p 5432 -U postgres_exporter -d postgres
+```
+
+### Check PostgreSQL Logs
+
+```bash
+# Find PostgreSQL log location
+psql -c "SHOW log_directory;"
+psql -c "SHOW log_filename;"
+
+# Watch logs
+tail -f /var/log/postgresql/postgresql-*.log
+```
+
+Look for:
+- Connection attempts from exporter
+- Authentication failures
+- Permission errors
+- Query errors
+
+### Verify Collector Metrics
+
+```bash
+# See which collectors succeeded
+curl -s localhost:9187/metrics | grep pg_scrape_collector_success
+
+# See collector durations
+curl -s localhost:9187/metrics | grep pg_scrape_collector_duration_seconds
+
+# Find slow collectors
+curl -s localhost:9187/metrics | \
+  grep pg_scrape_collector_duration_seconds | \
+  sort -t'{' -k2 -n
+```
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. **Check existing issues**: Search the [GitHub issues](https://github.com/prometheus-community/postgres_exporter/issues)
+
+2. **Gather information**:
+   ```bash
+   # Exporter version
+   ./postgres_exporter --version
+   
+   # PostgreSQL version
+   psql -c "SELECT version();"
+   
+   # Debug logs
+   ./postgres_exporter --log.level=debug 2>&1 | tee exporter.log
+   
+   # Metrics output
+   curl -s localhost:9187/metrics > metrics.txt
+   ```
+
+3. **Create a minimal reproduction**:
+   - Simplify configuration to the bare minimum
+   - Test with a fresh PostgreSQL instance if possible
+   - Document exact steps to reproduce
+
+4. **Open an issue** with:
+   - Exporter version
+   - PostgreSQL version
+   - Operating system
+   - Configuration (redact passwords)
+   - Error messages
+   - Debug logs
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security Best Practices" icon="shield" href="/advanced/security">
+    Ensure your deployment is secure
+  </Card>
+  <Card title="Performance Tuning" icon="gauge" href="/advanced/performance">
+    Optimize collector performance
+  </Card>
+</CardGroup>

@@ -1,80 +1,356 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quick Start Guide'
+description: 'Get PostgreSQL Server Exporter running in minutes'
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+Before starting, ensure you have:
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+- A running PostgreSQL server (versions 13-18 recommended)
+- Docker installed, or access to download the binary
+- Network access from the exporter to PostgreSQL (default port 5432)
+- PostgreSQL user credentials with monitoring permissions
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  This guide uses Docker for the fastest setup. See [Installation](/installation) for other methods.
 </Note>
+
+## Launch in 3 Steps
+
+<Steps>
+  <Step title="Start a Test PostgreSQL Database (Optional)">
+    If you don't have a PostgreSQL instance available, start one for testing:
+
+    ```bash
+    docker run --name postgres-test \
+      --net=host \
+      -e POSTGRES_PASSWORD=password \
+      -d postgres:16
+    ```
+
+    This creates a PostgreSQL 16 instance on `localhost:5432` with:
+    - Username: `postgres`
+    - Password: `password`
+    - Database: `postgres`
+
+    <Warning>
+      This configuration is for testing only. Never use default credentials in production.
+    </Warning>
+  </Step>
+
+  <Step title="Run the PostgreSQL Exporter">
+    Start the exporter container with connection parameters:
+
+    ```bash
+    docker run -d \
+      --name postgres-exporter \
+      --net=host \
+      -e DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable" \
+      -e DATA_SOURCE_USER="postgres" \
+      -e DATA_SOURCE_PASS="password" \
+      quay.io/prometheuscommunity/postgres-exporter
+    ```
+
+    <Accordion title="Understanding the Configuration">
+      - **`DATA_SOURCE_URI`**: PostgreSQL connection string in format `host:port/database?options`
+      - **`DATA_SOURCE_USER`**: PostgreSQL username with monitoring access
+      - **`DATA_SOURCE_PASS`**: User password
+      - **`--net=host`**: Shares host network (simplifies local testing)
+      - **Port 9187**: Default metrics endpoint (automatically exposed)
+    </Accordion>
+
+    ### Secure Production Configuration
+
+    For production deployments, use file-based secrets instead of environment variables:
+
+    ```bash
+    # Create a password file
+    echo "your-secure-password" > /secure/postgres-password.txt
+    chmod 400 /secure/postgres-password.txt
+
+    docker run -d \
+      --name postgres-exporter \
+      -p 9187:9187 \
+      -v /secure/postgres-password.txt:/secrets/password:ro \
+      -e DATA_SOURCE_URI="postgres-server:5432/postgres?sslmode=require" \
+      -e DATA_SOURCE_USER="postgres_exporter" \
+      -e DATA_SOURCE_PASS_FILE="/secrets/password" \
+      quay.io/prometheuscommunity/postgres-exporter
+    ```
+
+    <Note>
+      The container runs as uid/gid **65534** (nobody). Ensure mounted password files are readable by this user.
+    </Note>
+  </Step>
+
+  <Step title="Verify Metrics Collection">
+    Test the metrics endpoint to confirm the exporter is working:
+
+    ```bash
+    curl http://localhost:9187/metrics
+    ```
+
+    You should see Prometheus-formatted metrics including:
+
+    ```text
+    # HELP pg_up Whether the last scrape of metrics from PostgreSQL was able to connect to the server (1 for yes, 0 for no).
+    # TYPE pg_up gauge
+    pg_up 1
+
+    # HELP pg_stat_database_numbackends Number of backends currently connected to this database
+    # TYPE pg_stat_database_numbackends gauge
+    pg_stat_database_numbackends{datname="postgres"} 3
+
+    # HELP pg_stat_database_xact_commit Number of transactions in this database that have been committed
+    # TYPE pg_stat_database_xact_commit counter
+    pg_stat_database_xact_commit{datname="postgres"} 12847
+    ```
+
+    <Accordion title="Key Metrics to Look For">
+      - **`pg_up{} 1`**: Exporter successfully connected to PostgreSQL
+      - **`pg_static{version=...}`**: PostgreSQL version information
+      - **`pg_stat_database_*`**: Database-level statistics (enabled by default)
+      - **`pg_exporter_last_scrape_error 0`**: No collection errors
+    </Accordion>
+  </Step>
+</Steps>
+
+## Configure Prometheus Scraping
+
+Add the exporter to your Prometheus configuration:
+
+<CodeGroup>
+
+```yaml prometheus.yml
+scrape_configs:
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['localhost:9187']
+        labels:
+          instance: 'postgres-prod-01'
+          environment: 'production'
+```
+
+```yaml Docker Compose
+version: '3.8'
+services:
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/mydb?sslmode=require"
+      DATA_SOURCE_USER: "postgres_exporter"
+      DATA_SOURCE_PASS_FILE: "/secrets/password"
+    volumes:
+      - ./postgres-password.txt:/secrets/password:ro
+    networks:
+      - monitoring
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - monitoring
+
+networks:
+  monitoring:
+    driver: bridge
+```
+
+</CodeGroup>
+
+<Note>
+  Replace `localhost:9187` with your exporter's hostname/IP if running on different servers.
+</Note>
+
+## Enable Optional Collectors
+
+By default, the exporter enables essential collectors. Enable additional collectors using command-line flags:
+
+```bash
+docker run -d \
+  --name postgres-exporter \
+  --net=host \
+  -e DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable" \
+  -e DATA_SOURCE_USER="postgres" \
+  -e DATA_SOURCE_PASS="password" \
+  quay.io/prometheuscommunity/postgres-exporter \
+  --collector.stat_statements \
+  --collector.long_running_transactions \
+  --collector.database_wraparound
+```
+
+<Accordion title="Useful Optional Collectors">
+  - **`--collector.stat_statements`**: Top queries by execution time (requires `pg_stat_statements` extension)
+  - **`--collector.long_running_transactions`**: Detect queries exceeding thresholds
+  - **`--collector.database_wraparound`**: Monitor transaction ID wraparound risk
+  - **`--collector.stat_checkpointer`**: Checkpoint performance metrics
+  - **`--collector.postmaster`**: PostgreSQL server process information
+
+  See the [Configuration Reference](/configuration/overview) for the complete collector list.
+</Accordion>
+
+## PostgreSQL User Setup
+
+Create a dedicated monitoring user with appropriate permissions:
+
+<CodeGroup>
+
+```sql PostgreSQL 10+
+-- Create monitoring user
+CREATE USER postgres_exporter WITH PASSWORD 'secure-password';
+
+-- Grant monitoring role (PostgreSQL 10+)
+GRANT pg_monitor TO postgres_exporter;
+
+-- Grant database connection
+GRANT CONNECT ON DATABASE postgres TO postgres_exporter;
+```
+
+```sql PostgreSQL 9.x
+-- Create monitoring user
+CREATE USER postgres_exporter WITH PASSWORD 'secure-password';
+
+-- Create schema for helper functions
+CREATE SCHEMA IF NOT EXISTS postgres_exporter;
+GRANT USAGE ON SCHEMA postgres_exporter TO postgres_exporter;
+ALTER USER postgres_exporter SET SEARCH_PATH TO postgres_exporter, pg_catalog;
+
+-- Create helper functions
+CREATE OR REPLACE FUNCTION postgres_exporter.get_pg_stat_activity() 
+RETURNS SETOF pg_stat_activity AS
+$$ SELECT * FROM pg_catalog.pg_stat_activity; $$
+LANGUAGE sql VOLATILE SECURITY DEFINER;
+
+CREATE OR REPLACE VIEW postgres_exporter.pg_stat_activity AS
+  SELECT * FROM postgres_exporter.get_pg_stat_activity();
+
+GRANT SELECT ON postgres_exporter.pg_stat_activity TO postgres_exporter;
+```
+
+```sql Enable pg_stat_statements
+-- Required for query performance monitoring
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+-- Grant access to the monitoring user
+GRANT SELECT ON pg_stat_statements TO postgres_exporter;
+```
+
+</CodeGroup>
+
+<Warning>
+  **AWS RDS/Aurora Users**: You cannot create functions as non-superuser. Use the master user or grant the monitoring user to the master user:
+  
+  ```sql
+  GRANT postgres_exporter TO <RDS_MASTER_USER>;
+  ```
+</Warning>
+
+## Verify Full Setup
+
+Run these checks to confirm everything is working:
+
+<Steps>
+  <Step title="Check Exporter Logs">
+    ```bash
+    docker logs postgres-exporter
+    ```
+
+    Look for:
+    ```text
+    level=info msg="Established new database connection" server="localhost:5432"
+    level=info msg="Semantic version changed" from="0.0.0" to="16.4.0"
+    ```
+  </Step>
+
+  <Step title="Test Metrics Endpoint">
+    ```bash
+    curl -s http://localhost:9187/metrics | grep pg_up
+    ```
+
+    Expected output:
+    ```text
+    pg_up 1
+    ```
+  </Step>
+
+  <Step title="Query from Prometheus">
+    Open Prometheus UI at `http://localhost:9090` and run:
+
+    ```promql
+    pg_stat_database_numbackends{datname="postgres"}
+    ```
+
+    You should see current connection counts.
+  </Step>
+</Steps>
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="pg_up shows 0">
+    Connection to PostgreSQL failed. Check:
+    
+    - PostgreSQL is running and accessible: `psql -h localhost -U postgres`
+    - Credentials are correct in `DATA_SOURCE_USER` and `DATA_SOURCE_PASS`
+    - Network connectivity: `telnet postgres-host 5432`
+    - `pg_hba.conf` allows connections from exporter IP
+    - Firewall rules allow port 5432
+  </Accordion>
+
+  <Accordion title="No metrics for specific collectors">
+    - Check collector is enabled: `docker exec postgres-exporter ps aux`
+    - Verify PostgreSQL version compatibility (some collectors require PostgreSQL 10+)
+    - Check user permissions: `SELECT * FROM pg_stat_activity` should return results
+  </Accordion>
+
+  <Accordion title="'permission denied' errors in logs">
+    - For PostgreSQL 10+: Run `GRANT pg_monitor TO postgres_exporter;`
+    - For PostgreSQL 9.x: Create helper functions (see PostgreSQL User Setup above)
+    - Check `SEARCH_PATH` includes monitoring schema
+  </Accordion>
+
+  <Accordion title="High CPU/memory usage">
+    - Disable expensive collectors you don't need
+    - Increase `PG_EXPORTER_COLLECTION_TIMEOUT` if queries are timing out
+    - For `stat_statements` collector, reduce `--collector.stat_statements.limit`
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Installation Methods"
+    icon="download"
+    href="/installation"
+  >
+    Binary installation, Kubernetes, and from-source builds
+  </Card>
+  <Card
+    title="Configuration Reference"
+    icon="gear"
+    href="/configuration"
+  >
+    Complete guide to all flags, collectors, and environment variables
+  </Card>
+  <Card
+    title="Multi-Target Setup"
+    icon="network-wired"
+    href="/multi-target"
+  >
+    Monitor multiple PostgreSQL instances from one exporter
+  </Card>
+  <Card
+    title="Prometheus Queries"
+    icon="magnifying-glass-chart"
+    href="/prometheus-queries"
+  >
+    Example PromQL queries for common monitoring scenarios
+  </Card>
+</CardGroup>

@@ -1,0 +1,120 @@
+---
+title: long-running-transactions
+description: Reference documentation for the long-running-transactions collector
+---
+
+The `long_running_transactions` collector monitors active transactions that have been running for an extended period.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.long-running-transactions`
+
+## Metrics
+
+### pg_long_running_transactions
+
+**Type:** Gauge  
+**Description:** Current number of long-running transactions
+
+**Labels:** None
+
+### pg_long_running_transactions_oldest_timestamp_seconds
+
+**Type:** Gauge  
+**Description:** The current maximum transaction age in seconds
+
+**Labels:** None
+
+**Note:** Returns 0 when no long-running transactions exist.
+
+## SQL Query
+
+```sql
+SELECT
+  COUNT(*) as transactions,
+  MAX(EXTRACT(EPOCH FROM clock_timestamp() - pg_stat_activity.xact_start)) AS oldest_timestamp_seconds
+FROM pg_catalog.pg_stat_activity
+WHERE state IS DISTINCT FROM 'idle'
+AND query NOT LIKE 'autovacuum:%'
+AND pg_stat_activity.xact_start IS NOT NULL
+AND pid <> pg_backend_pid();
+```
+
+## What is Monitored
+
+The collector tracks transactions that are:
+- **Active** (not idle)
+- **Not autovacuum** processes
+- **Have a transaction start time** (`xact_start IS NOT NULL`)
+- **Not the monitoring connection itself**
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_catalog.pg_stat_activity` view
+
+## Example Output
+
+```
+pg_long_running_transactions 3
+pg_long_running_transactions_oldest_timestamp_seconds 1247.83
+```
+
+## Use Cases
+
+### Detecting Problematic Transactions
+
+Long-running transactions can:
+- Prevent vacuum from cleaning up dead tuples
+- Hold locks for extended periods
+- Cause transaction ID wraparound issues
+- Impact replication lag
+- Cause table bloat
+
+### Alert Examples
+
+```promql
+# Transactions running longer than 5 minutes
+pg_long_running_transactions_oldest_timestamp_seconds > 300
+
+# Multiple long-running transactions
+pg_long_running_transactions > 5
+```
+
+## Troubleshooting
+
+When long-running transactions are detected:
+
+1. **Identify the queries:**
+```sql
+SELECT pid, usename, application_name, state, query, 
+       now() - xact_start as duration
+FROM pg_stat_activity
+WHERE xact_start IS NOT NULL
+  AND state != 'idle'
+ORDER BY xact_start;
+```
+
+2. **Check for idle in transaction:**
+```sql
+SELECT * FROM pg_stat_activity 
+WHERE state = 'idle in transaction' 
+AND xact_start < now() - interval '5 minutes';
+```
+
+3. **Terminate if necessary:**
+```sql
+SELECT pg_terminate_backend(pid) 
+FROM pg_stat_activity 
+WHERE pid = <pid>;
+```
+
+## Related
+
+- [pg_stat_activity view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW)

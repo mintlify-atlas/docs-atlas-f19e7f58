@@ -1,0 +1,86 @@
+---
+title: database-wraparound
+description: Reference documentation for the database-wraparound collector
+---
+
+The `database_wraparound` collector monitors transaction ID wraparound risk by tracking the age of the oldest transaction IDs and multi-transaction IDs.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.database-wraparound`
+
+## Metrics
+
+### pg_database_wraparound_age_datfrozenxid_seconds
+
+**Type:** Gauge  
+**Description:** Age of the oldest transaction ID that has not been frozen
+
+**Labels:**
+- `datname` - Database name
+
+**Usage:** Monitor for wraparound risk. PostgreSQL will force autovacuum when this reaches ~2 billion.
+
+### pg_database_wraparound_age_datminmxid_seconds
+
+**Type:** Gauge  
+**Description:** Age of the oldest multi-transaction ID that has been replaced with a transaction ID
+
+**Labels:**
+- `datname` - Database name
+
+## SQL Query
+
+```sql
+SELECT
+  datname,
+  age(d.datfrozenxid) as age_datfrozenxid,
+  mxid_age(d.datminmxid) as age_datminmxid
+FROM
+  pg_catalog.pg_database d
+WHERE
+  d.datallowconn
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_catalog.pg_database`
+
+## Wraparound Protection
+
+<Warning>
+PostgreSQL will shut down when transaction IDs reach ~2.1 billion to prevent wraparound. Monitor these metrics carefully.
+</Warning>
+
+### Alert Thresholds
+
+- **Warning:** `age_datfrozenxid` > 1,000,000,000 (1 billion)
+- **Critical:** `age_datfrozenxid` > 1,500,000,000 (1.5 billion)
+- **Emergency:** `age_datfrozenxid` > 2,000,000,000 (2 billion)
+
+## Example Output
+
+```
+pg_database_wraparound_age_datfrozenxid_seconds{datname="myapp"} 45000000
+pg_database_wraparound_age_datminmxid_seconds{datname="myapp"} 12000000
+```
+
+## Troubleshooting
+
+If wraparound age is high:
+1. Check autovacuum is running: `SELECT * FROM pg_stat_activity WHERE query LIKE 'autovacuum:%'`
+2. Run manual `VACUUM FREEZE` on affected tables
+3. Increase `autovacuum_freeze_max_age` temporarily if needed
+4. Check for long-running transactions blocking vacuum
+
+## Related
+
+- [Transaction ID Wraparound](https://www.postgresql.org/docs/current/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND)
+- [pg_database catalog](https://www.postgresql.org/docs/current/catalog-pg-database.html)

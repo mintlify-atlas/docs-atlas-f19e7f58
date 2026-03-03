@@ -1,0 +1,300 @@
+---
+title: Database Statistics Collector
+description: Monitor PostgreSQL database-level activity and performance statistics
+---
+
+The database statistics collector gathers comprehensive metrics from the `pg_stat_database` system view, providing detailed insights into database activity, transactions, block I/O, and more.
+
+<Note>
+This collector is **enabled by default**.
+</Note>
+
+## What It Monitors
+
+The database statistics collector tracks:
+
+- Active database connections
+- Transaction commits and rollbacks
+- Block reads and cache hits
+- Tuple operations (rows returned, fetched, inserted, updated, deleted)
+- Temporary file usage
+- Deadlock counts
+- Block I/O timing
+- Query active time (PostgreSQL 14+)
+
+## Metrics Exposed
+
+### Connection Metrics
+
+#### pg_stat_database_numbackends
+
+Number of backends currently connected to the database.
+
+**Type:** Gauge  
+**Labels:** `datid`, `datname`
+
+### Transaction Metrics
+
+#### pg_stat_database_xact_commit
+
+Number of transactions committed in this database.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_xact_rollback
+
+Number of transactions rolled back in this database.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+### Block I/O Metrics
+
+#### pg_stat_database_blks_read
+
+Number of disk blocks read from disk.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_blks_hit
+
+Number of disk blocks found in the buffer cache (cache hits).
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_blk_read_time
+
+Time spent reading data file blocks in milliseconds.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+<Note>
+Requires `track_io_timing` to be enabled in PostgreSQL configuration.
+</Note>
+
+#### pg_stat_database_blk_write_time
+
+Time spent writing data file blocks in milliseconds.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+### Tuple (Row) Metrics
+
+#### pg_stat_database_tup_returned
+
+Number of rows returned by queries in this database.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_tup_fetched
+
+Number of rows fetched by queries in this database.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_tup_inserted
+
+Number of rows inserted by queries in this database.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_tup_updated
+
+Number of rows updated by queries in this database.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_tup_deleted
+
+Number of rows deleted by queries in this database.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+### Conflict and Error Metrics
+
+#### pg_stat_database_conflicts
+
+Number of queries canceled due to conflicts with recovery (standby servers only).
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_deadlocks
+
+Number of deadlocks detected in this database.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+### Temporary File Metrics
+
+#### pg_stat_database_temp_files
+
+Number of temporary files created by queries in this database.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+#### pg_stat_database_temp_bytes
+
+Total amount of data written to temporary files in bytes.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+### Statistics Reset Metric
+
+#### pg_stat_database_stats_reset
+
+Timestamp when these statistics were last reset.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+### Active Time Metric (PostgreSQL 14+)
+
+#### pg_stat_database_active_time_seconds_total
+
+Time spent executing SQL statements in this database, in seconds.
+
+**Type:** Counter  
+**Labels:** `datid`, `datname`
+
+<Note>
+This metric is only available on PostgreSQL 14 and later.
+</Note>
+
+## SQL Query Used
+
+The collector dynamically builds a query based on PostgreSQL version:
+
+```sql
+SELECT 
+    datid,
+    datname,
+    numbackends,
+    xact_commit,
+    xact_rollback,
+    blks_read,
+    blks_hit,
+    tup_returned,
+    tup_fetched,
+    tup_inserted,
+    tup_updated,
+    tup_deleted,
+    conflicts,
+    temp_files,
+    temp_bytes,
+    deadlocks,
+    blk_read_time,
+    blk_write_time,
+    stats_reset,
+    active_time  -- PostgreSQL 14+ only
+FROM pg_stat_database;
+```
+
+## Configuration
+
+### Enable/Disable the Collector
+
+```bash
+# Disable the stat_database collector
+postgres_exporter --no-collector.stat_database
+
+# Explicitly enable it (default behavior)
+postgres_exporter --collector.stat_database
+```
+
+## Use Cases
+
+### Calculate Cache Hit Ratio
+
+Measure how effectively PostgreSQL uses its buffer cache:
+
+```promql
+sum(rate(pg_stat_database_blks_hit[5m])) / 
+(sum(rate(pg_stat_database_blks_hit[5m])) + sum(rate(pg_stat_database_blks_read[5m])))
+```
+
+A ratio above 0.99 (99%) is generally considered good.
+
+### Monitor Transaction Rate
+
+Track database transaction throughput:
+
+```promql
+sum(rate(pg_stat_database_xact_commit[5m])) by (datname)
+```
+
+### Detect Deadlock Issues
+
+Alert on deadlock occurrences:
+
+```promql
+rate(pg_stat_database_deadlocks[5m]) > 0
+```
+
+### Monitor Temporary File Usage
+
+Track queries that spill to disk:
+
+```promql
+rate(pg_stat_database_temp_bytes[5m]) > threshold
+```
+
+High temporary file usage indicates:
+- Insufficient `work_mem` configuration
+- Complex queries requiring disk sorts
+- Need for query optimization
+
+### Identify Read/Write Heavy Databases
+
+Find databases with high I/O:
+
+```promql
+topk(5, rate(pg_stat_database_blks_read[5m]))
+```
+
+## Permissions Required
+
+The database statistics collector requires:
+
+- `CONNECT` privilege on the database
+- Read access to the `pg_stat_database` view
+- For PostgreSQL 10+: `pg_monitor` or `pg_read_all_stats` role
+- For PostgreSQL &lt;10: Read access to statistics views
+
+## Performance Considerations
+
+The database statistics collector:
+
+- Queries a single system view (`pg_stat_database`)
+- Has minimal performance impact
+- Statistics are maintained in-memory by PostgreSQL
+- Does not lock tables or interfere with operations
+- Safe to query frequently
+
+## Related Collectors
+
+- [User Tables Statistics](/collectors/stat-user-tables) - Table-level statistics
+- [Database](/collectors/database) - Database size and connection limits
+
+## Important Notes
+
+<Note>
+All counter metrics return accumulated values since the last statistics reset. To get rates, use Prometheus rate functions.
+</Note>
+
+<Warning>
+The `pg_stat_database_numbackends` metric shows current state, not accumulated values. All other metrics are cumulative counters.
+</Warning>

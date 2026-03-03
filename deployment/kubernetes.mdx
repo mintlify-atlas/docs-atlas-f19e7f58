@@ -1,0 +1,387 @@
+---
+title: Kubernetes Deployment
+description: Deploy PostgreSQL Server Exporter on Kubernetes
+---
+
+Deploy the PostgreSQL Server Exporter on Kubernetes using Deployments, Services, and Secrets for secure credential management.
+
+## Prerequisites
+
+- Kubernetes cluster (1.19+)
+- kubectl configured
+- PostgreSQL database accessible from the cluster
+
+## Basic Deployment
+
+<Steps>
+  <Step title="Create a namespace">
+    ```bash
+    kubectl create namespace monitoring
+    ```
+  </Step>
+
+  <Step title="Create a Secret for database credentials">
+    <Warning>
+    Store database credentials securely using Kubernetes Secrets. Never hardcode passwords in manifests.
+    </Warning>
+
+    ```bash
+    kubectl create secret generic postgres-exporter-secret \
+      --from-literal=password='your_database_password' \
+      -n monitoring
+    ```
+  </Step>
+
+  <Step title="Create the Deployment">
+    Create `postgres-exporter-deployment.yaml`:
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: postgres-exporter
+      namespace: monitoring
+      labels:
+        app: postgres-exporter
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: postgres-exporter
+      template:
+        metadata:
+          labels:
+            app: postgres-exporter
+        spec:
+          containers:
+          - name: postgres-exporter
+            image: quay.io/prometheuscommunity/postgres-exporter:latest
+            ports:
+            - containerPort: 9187
+              name: metrics
+              protocol: TCP
+            env:
+            - name: DATA_SOURCE_URI
+              value: "postgres.default.svc.cluster.local:5432/postgres?sslmode=require"
+            - name: DATA_SOURCE_USER
+              value: "postgres_exporter"
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-exporter-secret
+                  key: password
+            livenessProbe:
+              httpGet:
+                path: /
+                port: 9187
+              initialDelaySeconds: 30
+              periodSeconds: 10
+            readinessProbe:
+              httpGet:
+                path: /
+                port: 9187
+              initialDelaySeconds: 10
+              periodSeconds: 5
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+            securityContext:
+              runAsUser: 65534
+              runAsGroup: 65534
+              runAsNonRoot: true
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+    ```
+
+    Apply the deployment:
+    ```bash
+    kubectl apply -f postgres-exporter-deployment.yaml
+    ```
+  </Step>
+
+  <Step title="Create a Service">
+    Create `postgres-exporter-service.yaml`:
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: postgres-exporter
+      namespace: monitoring
+      labels:
+        app: postgres-exporter
+    spec:
+      selector:
+        app: postgres-exporter
+      ports:
+      - name: metrics
+        port: 9187
+        targetPort: 9187
+        protocol: TCP
+      type: ClusterIP
+    ```
+
+    Apply the service:
+    ```bash
+    kubectl apply -f postgres-exporter-service.yaml
+    ```
+  </Step>
+
+  <Step title="Verify the deployment">
+    Check that the pod is running:
+    ```bash
+    kubectl get pods -n monitoring
+    kubectl logs -n monitoring -l app=postgres-exporter
+    ```
+
+    Test metrics endpoint:
+    ```bash
+    kubectl port-forward -n monitoring svc/postgres-exporter 9187:9187
+    curl http://localhost:9187/metrics
+    ```
+  </Step>
+</Steps>
+
+## Using Password Files
+
+<Warning>
+For enhanced security, use mounted files instead of environment variables for passwords.
+</Warning>
+
+<Steps>
+  <Step title="Create a Secret from file">
+    ```bash
+    kubectl create secret generic postgres-password \
+      --from-file=password=/path/to/password.txt \
+      -n monitoring
+    ```
+  </Step>
+
+  <Step title="Mount the Secret as a volume">
+    Update your Deployment to mount the secret:
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: postgres-exporter
+      namespace: monitoring
+    spec:
+      template:
+        spec:
+          containers:
+          - name: postgres-exporter
+            image: quay.io/prometheuscommunity/postgres-exporter:latest
+            env:
+            - name: DATA_SOURCE_URI
+              value: "postgres:5432/postgres?sslmode=require"
+            - name: DATA_SOURCE_USER
+              value: "postgres_exporter"
+            - name: DATA_SOURCE_PASS_FILE
+              value: "/secrets/password"
+            volumeMounts:
+            - name: password
+              mountPath: /secrets
+              readOnly: true
+          volumes:
+          - name: password
+            secret:
+              secretName: postgres-password
+              defaultMode: 0400
+    ```
+  </Step>
+</Steps>
+
+## Configuration File
+
+For multi-target support or advanced configuration:
+
+<Steps>
+  <Step title="Create a ConfigMap">
+    ```yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: postgres-exporter-config
+      namespace: monitoring
+    data:
+      postgres_exporter.yml: |
+        auth_modules:
+          primary:
+            type: userpass
+            userpass:
+              username: postgres_exporter
+              password: changeme
+            options:
+              sslmode: require
+          replica:
+            type: userpass
+            userpass:
+              username: postgres_exporter
+              password: changeme
+            options:
+              sslmode: require
+    ```
+  </Step>
+
+  <Step title="Mount the ConfigMap">
+    Update the Deployment:
+    ```yaml
+    spec:
+      template:
+        spec:
+          containers:
+          - name: postgres-exporter
+            image: quay.io/prometheuscommunity/postgres-exporter:latest
+            args:
+            - "--config.file=/config/postgres_exporter.yml"
+            volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          volumes:
+          - name: config
+            configMap:
+              name: postgres-exporter-config
+    ```
+  </Step>
+</Steps>
+
+## Prometheus ServiceMonitor
+
+If using the Prometheus Operator:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres-exporter
+  namespace: monitoring
+  labels:
+    app: postgres-exporter
+spec:
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  endpoints:
+  - port: metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    path: /metrics
+```
+
+## Multi-Target Deployment
+
+For monitoring multiple PostgreSQL instances:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-exporter-config
+  namespace: monitoring
+data:
+  postgres_exporter.yml: |
+    auth_modules:
+      db1:
+        type: userpass
+        userpass:
+          username: postgres_exporter
+          password: db1_password
+        options:
+          sslmode: require
+      db2:
+        type: userpass
+        userpass:
+          username: postgres_exporter
+          password: db2_password
+        options:
+          sslmode: require
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: monitoring
+spec:
+  selector:
+    app: postgres-exporter
+  ports:
+  - name: metrics
+    port: 9187
+    targetPort: 9187
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres-exporter-multi
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /probe
+    params:
+      auth_module: [db1]
+      target: [db1.example.com:5432]
+    relabelings:
+    - sourceLabels: [__param_target]
+      targetLabel: instance
+  - port: metrics
+    interval: 30s
+    path: /probe
+    params:
+      auth_module: [db2]
+      target: [db2.example.com:5432]
+    relabelings:
+    - sourceLabels: [__param_target]
+      targetLabel: instance
+```
+
+## Resource Recommendations
+
+Based on the number of databases and metrics:
+
+| Databases | CPU Request | Memory Request | CPU Limit | Memory Limit |
+|-----------|-------------|----------------|-----------|---------------|
+| 1-5       | 100m        | 128Mi          | 500m      | 512Mi         |
+| 5-20      | 200m        | 256Mi          | 1000m     | 1Gi           |
+| 20+       | 500m        | 512Mi          | 2000m     | 2Gi           |
+
+## Security Best Practices
+
+<Warning>
+- Always run as non-root user (uid 65534)
+- Use read-only root filesystem
+- Drop all capabilities
+- Store credentials in Kubernetes Secrets
+- Use `DATA_SOURCE_PASS_FILE` with mounted secrets
+- Set appropriate file permissions (mode 0400)
+- Enable network policies to restrict traffic
+- Use Pod Security Standards (restricted profile)
+</Warning>
+
+## Troubleshooting
+
+Check pod logs:
+```bash
+kubectl logs -n monitoring -l app=postgres-exporter --tail=100
+```
+
+Verify connectivity to PostgreSQL:
+```bash
+kubectl exec -n monitoring -it <pod-name> -- sh
+wget -O- http://localhost:9187/metrics
+```
+
+Check Secret is mounted correctly:
+```bash
+kubectl exec -n monitoring -it <pod-name> -- ls -la /secrets/
+```

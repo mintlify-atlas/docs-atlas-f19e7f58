@@ -1,0 +1,429 @@
+---
+title: systemd Service
+description: Deploy PostgreSQL Server Exporter as a systemd service
+---
+
+Run the PostgreSQL Server Exporter as a systemd service for automatic startup, restart on failure, and centralized logging.
+
+## Prerequisites
+
+- PostgreSQL Server Exporter binary installed (see [Binary Deployment](/deployment/binary))
+- systemd-based Linux distribution
+- PostgreSQL database accessible from the host
+
+## Service Setup
+
+<Steps>
+  <Step title="Create a dedicated user">
+    Create a system user for running the exporter:
+    ```bash
+    sudo useradd --system --no-create-home --shell /bin/false postgres_exporter
+    ```
+  </Step>
+
+  <Step title="Create necessary directories">
+    ```bash
+    sudo mkdir -p /etc/postgres_exporter
+    sudo mkdir -p /var/log/postgres_exporter
+    sudo chown postgres_exporter:postgres_exporter /etc/postgres_exporter
+    sudo chown postgres_exporter:postgres_exporter /var/log/postgres_exporter
+    ```
+  </Step>
+
+  <Step title="Create a password file">
+    <Warning>
+    Store database credentials securely with restricted file permissions.
+    </Warning>
+
+    ```bash
+    echo "your_database_password" | sudo tee /etc/postgres_exporter/password.txt
+    sudo chmod 600 /etc/postgres_exporter/password.txt
+    sudo chown postgres_exporter:postgres_exporter /etc/postgres_exporter/password.txt
+    ```
+  </Step>
+
+  <Step title="Create environment file">
+    Create `/etc/postgres_exporter/postgres_exporter.env`:
+    ```bash
+    DATA_SOURCE_URI=localhost:5432/postgres?sslmode=require
+    DATA_SOURCE_USER=postgres_exporter
+    DATA_SOURCE_PASS_FILE=/etc/postgres_exporter/password.txt
+    ```
+
+    Set permissions:
+    ```bash
+    sudo chmod 600 /etc/postgres_exporter/postgres_exporter.env
+    sudo chown postgres_exporter:postgres_exporter /etc/postgres_exporter/postgres_exporter.env
+    ```
+  </Step>
+
+  <Step title="Create systemd service file">
+    Create `/etc/systemd/system/postgres_exporter.service`:
+    ```ini
+    [Unit]
+    Description=Prometheus PostgreSQL Exporter
+    Documentation=https://github.com/prometheus-community/postgres_exporter
+    After=network-online.target
+    Wants=network-online.target
+
+    [Service]
+    Type=simple
+    User=postgres_exporter
+    Group=postgres_exporter
+    EnvironmentFile=/etc/postgres_exporter/postgres_exporter.env
+    ExecStart=/usr/local/bin/postgres_exporter \
+      --web.listen-address=:9187 \
+      --web.telemetry-path=/metrics \
+      --log.level=info
+    
+    # Security settings
+    NoNewPrivileges=true
+    PrivateTmp=true
+    ProtectSystem=strict
+    ProtectHome=true
+    ReadWritePaths=/var/log/postgres_exporter
+    ProtectKernelTunables=true
+    ProtectKernelModules=true
+    ProtectControlGroups=true
+    RestrictRealtime=true
+    RestrictNamespaces=true
+    RestrictSUIDSGID=true
+    LockPersonality=true
+    
+    # Restart policy
+    Restart=on-failure
+    RestartSec=5s
+    
+    # Resource limits
+    LimitNOFILE=65536
+    
+    [Install]
+    WantedBy=multi-user.target
+    ```
+  </Step>
+
+  <Step title="Reload systemd and enable service">
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable postgres_exporter
+    ```
+  </Step>
+
+  <Step title="Start the service">
+    ```bash
+    sudo systemctl start postgres_exporter
+    ```
+  </Step>
+
+  <Step title="Verify the service is running">
+    ```bash
+    sudo systemctl status postgres_exporter
+    ```
+
+    Test metrics endpoint:
+    ```bash
+    curl http://localhost:9187/metrics
+    ```
+  </Step>
+</Steps>
+
+## Service Configuration Options
+
+### Using Configuration File
+
+For multi-target or advanced setups:
+
+<Steps>
+  <Step title="Create configuration file">
+    Create `/etc/postgres_exporter/postgres_exporter.yml`:
+    ```yaml
+    auth_modules:
+      primary:
+        type: userpass
+        userpass:
+          username: postgres_exporter
+          password: primary_password
+        options:
+          sslmode: require
+      replica:
+        type: userpass
+        userpass:
+          username: postgres_exporter
+          password: replica_password
+        options:
+          sslmode: require
+    ```
+
+    Set permissions:
+    ```bash
+    sudo chmod 600 /etc/postgres_exporter/postgres_exporter.yml
+    sudo chown postgres_exporter:postgres_exporter /etc/postgres_exporter/postgres_exporter.yml
+    ```
+  </Step>
+
+  <Step title="Update systemd service file">
+    Modify `ExecStart` in `/etc/systemd/system/postgres_exporter.service`:
+    ```ini
+    ExecStart=/usr/local/bin/postgres_exporter \
+      --config.file=/etc/postgres_exporter/postgres_exporter.yml \
+      --web.listen-address=:9187 \
+      --web.telemetry-path=/metrics \
+      --log.level=info
+    ```
+  </Step>
+
+  <Step title="Reload and restart">
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl restart postgres_exporter
+    ```
+  </Step>
+</Steps>
+
+### Using Unix Socket
+
+For local PostgreSQL using Unix sockets (common on Debian/Ubuntu):
+
+Update the environment file `/etc/postgres_exporter/postgres_exporter.env`:
+```bash
+DATA_SOURCE_NAME=user=postgres host=/var/run/postgresql/ sslmode=disable
+```
+
+<Warning>
+When using Unix sockets, ensure the `postgres_exporter` user has access to the socket directory, typically by adding it to the `postgres` group:
+```bash
+sudo usermod -a -G postgres postgres_exporter
+```
+</Warning>
+
+## Managing the Service
+
+### Start, Stop, Restart
+
+```bash
+# Start the service
+sudo systemctl start postgres_exporter
+
+# Stop the service
+sudo systemctl stop postgres_exporter
+
+# Restart the service
+sudo systemctl restart postgres_exporter
+
+# Reload configuration without restart
+sudo systemctl reload postgres_exporter
+```
+
+### Enable/Disable Auto-Start
+
+```bash
+# Enable auto-start on boot
+sudo systemctl enable postgres_exporter
+
+# Disable auto-start
+sudo systemctl disable postgres_exporter
+```
+
+### Check Status
+
+```bash
+# View service status
+sudo systemctl status postgres_exporter
+
+# View logs
+sudo journalctl -u postgres_exporter -f
+
+# View recent logs
+sudo journalctl -u postgres_exporter -n 100
+
+# View logs since last boot
+sudo journalctl -u postgres_exporter -b
+```
+
+## Advanced Configuration
+
+### systemd Socket Activation
+
+Use systemd socket activation for on-demand service start:
+
+<Steps>
+  <Step title="Create socket unit">
+    Create `/etc/systemd/system/postgres_exporter.socket`:
+    ```ini
+    [Unit]
+    Description=Prometheus PostgreSQL Exporter Socket
+
+    [Socket]
+    ListenStream=9187
+
+    [Install]
+    WantedBy=sockets.target
+    ```
+  </Step>
+
+  <Step title="Update service file">
+    Modify `/etc/systemd/system/postgres_exporter.service`:
+    ```ini
+    [Unit]
+    Description=Prometheus PostgreSQL Exporter
+    Requires=postgres_exporter.socket
+
+    [Service]
+    Type=simple
+    User=postgres_exporter
+    Group=postgres_exporter
+    EnvironmentFile=/etc/postgres_exporter/postgres_exporter.env
+    ExecStart=/usr/local/bin/postgres_exporter \
+      --web.systemd-socket \
+      --web.telemetry-path=/metrics
+    ```
+  </Step>
+
+  <Step title="Enable socket">
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable postgres_exporter.socket
+    sudo systemctl start postgres_exporter.socket
+    ```
+  </Step>
+</Steps>
+
+### Resource Limits
+
+Add resource constraints to the service file:
+
+```ini
+[Service]
+# CPU quota (50% of one CPU)
+CPUQuota=50%
+
+# Memory limit
+MemoryLimit=512M
+MemoryMax=1G
+
+# File descriptor limit
+LimitNOFILE=65536
+
+# Process limit
+LimitNPROC=512
+```
+
+### Custom Collectors
+
+Enable specific collectors:
+
+```ini
+[Service]
+ExecStart=/usr/local/bin/postgres_exporter \
+  --web.listen-address=:9187 \
+  --collector.stat_statements \
+  --collector.postmaster \
+  --collector.long_running_transactions \
+  --extend.query-path=/etc/postgres_exporter/queries.yaml
+```
+
+## FreeBSD rc.d Service
+
+For FreeBSD systems, use the provided rc.d script:
+
+<Steps>
+  <Step title="Copy the rc script">
+    The source includes `postgres_exporter.rc` which can be installed:
+    ```bash
+    sudo cp postgres_exporter.rc /usr/local/etc/rc.d/postgres_exporter
+    sudo chmod +x /usr/local/etc/rc.d/postgres_exporter
+    ```
+  </Step>
+
+  <Step title="Configure in rc.conf">
+    Add to `/etc/rc.conf`:
+    ```bash
+    postgres_exporter_enable="YES"
+    postgres_exporter_user="nobody"
+    postgres_exporter_group="nobody"
+    postgres_exporter_listen_address=":9187"
+    postgres_exporter_pg_user="postgres_exporter"
+    postgres_exporter_pg_pass="your_password"
+    postgres_exporter_pg_host="localhost"
+    postgres_exporter_pg_port="5432"
+    ```
+  </Step>
+
+  <Step title="Start the service">
+    ```bash
+    sudo service postgres_exporter start
+    ```
+  </Step>
+</Steps>
+
+## Security Hardening
+
+<Warning>
+The provided systemd service includes security hardening options:
+- `NoNewPrivileges`: Prevents privilege escalation
+- `ProtectSystem=strict`: Makes file system read-only except specified paths
+- `ProtectHome`: Hides home directories
+- `PrivateTmp`: Provides isolated /tmp
+- `ProtectKernelTunables`: Prevents kernel parameter modifications
+- `RestrictRealtime`: Prevents realtime scheduling
+- `LockPersonality`: Prevents personality changes
+
+Ensure password files have mode 600 and are owned by the service user.
+</Warning>
+
+## Troubleshooting
+
+### Service fails to start
+
+Check logs for errors:
+```bash
+sudo journalctl -u postgres_exporter -n 50 --no-pager
+```
+
+### Permission denied errors
+
+Verify file ownership:
+```bash
+ls -la /etc/postgres_exporter/
+```
+
+Ensure all files are owned by `postgres_exporter:postgres_exporter`.
+
+### Connection refused
+
+Check that PostgreSQL is accessible:
+```bash
+sudo -u postgres_exporter psql -h localhost -p 5432 -U postgres_exporter -d postgres
+```
+
+### View detailed logs
+
+Enable debug logging:
+```ini
+[Service]
+ExecStart=/usr/local/bin/postgres_exporter \
+  --log.level=debug
+```
+
+Reload and restart:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart postgres_exporter
+sudo journalctl -u postgres_exporter -f
+```
+
+## Monitoring the Service
+
+Create a local Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['localhost:9187']
+```
+
+Check service health:
+```bash
+curl -s http://localhost:9187/metrics | grep pg_up
+```

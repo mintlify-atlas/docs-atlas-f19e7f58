@@ -1,0 +1,187 @@
+---
+title: replication-slot
+description: Reference documentation for the replication-slot collector
+---
+
+The `replication_slot` collector monitors PostgreSQL replication slots, tracking WAL retention and slot activity.
+
+## Status
+
+**Default: Enabled**
+
+## Metrics
+
+### pg_replication_slot_slot_current_wal_lsn
+
+**Type:** Gauge  
+**Description:** Current WAL LSN (Log Sequence Number) as integer
+
+**Labels:**
+- `slot_name` - Replication slot name
+- `slot_type` - Slot type (`physical` or `logical`)
+
+### pg_replication_slot_slot_confirmed_flush_lsn
+
+**Type:** Gauge  
+**Description:** Last LSN confirmed flushed to the replication slot
+
+**Labels:**
+- `slot_name` - Replication slot name
+- `slot_type` - Slot type (`physical` or `logical`)
+
+**Note:** Only reported when the slot is active.
+
+### pg_replication_slot_slot_is_active
+
+**Type:** Gauge  
+**Description:** Whether the replication slot is active
+
+**Labels:**
+- `slot_name` - Replication slot name
+- `slot_type` - Slot type (`physical` or `logical`)
+
+**Values:**
+- `1` - Slot is active
+- `0` - Slot is inactive
+
+### pg_replication_slot_safe_wal_size_bytes
+
+**Type:** Gauge  
+**Description:** Number of bytes that can be written to WAL such that this slot is not in danger of being lost
+
+**Labels:**
+- `slot_name` - Replication slot name
+- `slot_type` - Slot type
+
+**Availability:** PostgreSQL 13+
+
+### pg_replication_slot_wal_status
+
+**Type:** Gauge  
+**Description:** Availability of WAL files claimed by this slot
+
+**Labels:**
+- `slot_name` - Replication slot name
+- `slot_type` - Slot type
+- `wal_status` - Status value (`reserved`, `extended`, `lost`)
+
+**Availability:** PostgreSQL 13+
+
+**Values:**
+- `reserved` - WAL files are reserved
+- `extended` - WAL retention extended beyond `max_wal_size`
+- `lost` - Some WAL files have been removed (slot may be invalid)
+
+## SQL Query
+
+**PostgreSQL 13+:**
+```sql
+SELECT
+  slot_name,
+  slot_type,
+  CASE WHEN pg_is_in_recovery() THEN
+    pg_last_wal_receive_lsn() - '0/0'
+  ELSE
+    pg_current_wal_lsn() - '0/0'
+  END AS current_wal_lsn,
+  COALESCE(confirmed_flush_lsn, '0/0') - '0/0' AS confirmed_flush_lsn,
+  active,
+  safe_wal_size,
+  wal_status
+FROM pg_replication_slots;
+```
+
+**PostgreSQL 12 and earlier:**
+```sql
+SELECT
+  slot_name,
+  slot_type,
+  CASE WHEN pg_is_in_recovery() THEN
+    pg_last_wal_receive_lsn() - '0/0'
+  ELSE
+    pg_current_wal_lsn() - '0/0'
+  END AS current_wal_lsn,
+  COALESCE(confirmed_flush_lsn, '0/0') - '0/0' AS confirmed_flush_lsn,
+  active
+FROM pg_replication_slots;
+```
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 9.4+ (when replication slots were introduced)
+
+**Version-specific features:**
+- **PostgreSQL 13+:** `safe_wal_size` and `wal_status` columns
+- **PostgreSQL 10+:** Function names changed from `pg_*_xlog_*` to `pg_*_wal_*`
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_replication_slots` view
+- Execute permission on WAL functions
+
+## Example Output
+
+```
+pg_replication_slot_slot_current_wal_lsn{slot_name="replica_1",slot_type="physical"} 123456789
+pg_replication_slot_slot_confirmed_flush_lsn{slot_name="replica_1",slot_type="physical"} 123456000
+pg_replication_slot_slot_is_active{slot_name="replica_1",slot_type="physical"} 1
+pg_replication_slot_safe_wal_size_bytes{slot_name="replica_1",slot_type="physical"} 1073741824
+pg_replication_slot_wal_status{slot_name="replica_1",slot_type="physical",wal_status="reserved"} 1
+```
+
+## Use Cases
+
+### Monitoring Slot Lag
+
+```promql
+# Calculate lag between current and confirmed flush
+pg_replication_slot_slot_current_wal_lsn - pg_replication_slot_slot_confirmed_flush_lsn
+```
+
+### Detecting Inactive Slots
+
+```promql
+# Inactive slots that might be holding WAL
+pg_replication_slot_slot_is_active == 0
+```
+
+### WAL Retention Issues
+
+<Warning>
+Inactive replication slots can prevent WAL files from being removed, leading to disk space issues.
+</Warning>
+
+```promql
+# Alert on low safe WAL size (PostgreSQL 13+)
+pg_replication_slot_safe_wal_size_bytes < 1073741824  # < 1GB
+
+# Alert on lost WAL status
+pg_replication_slot_wal_status{wal_status="lost"} == 1
+```
+
+## Troubleshooting
+
+### Check Slot Status
+
+```sql
+SELECT 
+  slot_name,
+  slot_type,
+  active,
+  pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS lag_bytes,
+  safe_wal_size,
+  wal_status
+FROM pg_replication_slots;
+```
+
+### Remove Inactive Slots
+
+```sql
+SELECT pg_drop_replication_slot('slot_name');
+```
+
+## Related
+
+- [pg_replication_slots view](https://www.postgresql.org/docs/current/view-pg-replication-slots.html)
+- [Replication slots documentation](https://www.postgresql.org/docs/current/warm-standby.html#STREAMING-REPLICATION-SLOTS)

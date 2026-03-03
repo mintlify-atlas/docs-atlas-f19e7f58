@@ -1,0 +1,445 @@
+---
+title: Metrics Overview
+description: Comprehensive reference of all metrics exposed by PostgreSQL Server Exporter
+---
+
+## Overview
+
+The PostgreSQL Server Exporter exposes metrics from PostgreSQL databases using the `pg_` prefix (configurable via `--metric-prefix`). Metrics are organized by collector, with each collector focusing on a specific aspect of PostgreSQL monitoring.
+
+## Metric Naming Convention
+
+All PostgreSQL metrics follow this naming pattern:
+
+```
+pg_<collector>_<metric_name>
+```
+
+For example:
+- `pg_database_size_bytes` - from the `database` collector
+- `pg_stat_database_numbackends` - from the `stat_database` collector
+- `pg_locks_count` - from the `locks` collector
+
+## Label Conventions
+
+Common labels used across metrics:
+
+- **datname** - Database name
+- **datid** - Database OID
+- **schemaname** - Schema name
+- **relname** - Relation (table) name
+- **collector** - Name of the collector (used in exporter metrics)
+- **slot_name** - Replication slot name
+- **slot_type** - Type of replication slot (physical/logical)
+- **mode** - Lock mode
+- **state** - Connection or replication state
+- **user** / **usename** - PostgreSQL user name
+
+## Collectors and Their Metrics
+
+### Database Collector
+
+**Collector name:** `database` (enabled by default)
+
+Tracks database-level information including size and connection limits.
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_database_size_bytes` | Gauge | `datname` | Disk space used by the database in bytes |
+| `pg_database_connection_limit` | Gauge | `datname` | Maximum number of concurrent connections allowed for the database (-1 = unlimited) |
+
+**Example PromQL:**
+```promql
+# Databases larger than 1GB
+pg_database_size_bytes > 1073741824
+
+# Database size growth rate
+rate(pg_database_size_bytes[1h])
+
+# Percentage of connection limit used
+(pg_stat_database_numbackends / pg_database_connection_limit) * 100
+```
+
+---
+
+### Database Statistics Collector
+
+**Collector name:** `stat_database` (enabled by default)
+
+Provides detailed statistics from `pg_stat_database` view.
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_stat_database_numbackends` | Gauge | `datid`, `datname` | Number of backends currently connected to this database |
+| `pg_stat_database_xact_commit` | Counter | `datid`, `datname` | Number of transactions committed |
+| `pg_stat_database_xact_rollback` | Counter | `datid`, `datname` | Number of transactions rolled back |
+| `pg_stat_database_blks_read` | Counter | `datid`, `datname` | Number of disk blocks read |
+| `pg_stat_database_blks_hit` | Counter | `datid`, `datname` | Number of buffer cache hits |
+| `pg_stat_database_tup_returned` | Counter | `datid`, `datname` | Number of rows returned by queries |
+| `pg_stat_database_tup_fetched` | Counter | `datid`, `datname` | Number of rows fetched by queries |
+| `pg_stat_database_tup_inserted` | Counter | `datid`, `datname` | Number of rows inserted |
+| `pg_stat_database_tup_updated` | Counter | `datid`, `datname` | Number of rows updated |
+| `pg_stat_database_tup_deleted` | Counter | `datid`, `datname` | Number of rows deleted |
+| `pg_stat_database_conflicts` | Counter | `datid`, `datname` | Number of queries canceled due to conflicts with recovery (standby only) |
+| `pg_stat_database_temp_files` | Counter | `datid`, `datname` | Number of temporary files created |
+| `pg_stat_database_temp_bytes` | Counter | `datid`, `datname` | Total amount of data written to temporary files in bytes |
+| `pg_stat_database_deadlocks` | Counter | `datid`, `datname` | Number of deadlocks detected |
+| `pg_stat_database_blk_read_time` | Counter | `datid`, `datname` | Time spent reading data file blocks in milliseconds (requires track_io_timing) |
+| `pg_stat_database_blk_write_time` | Counter | `datid`, `datname` | Time spent writing data file blocks in milliseconds (requires track_io_timing) |
+| `pg_stat_database_stats_reset` | Counter | `datid`, `datname` | Time at which statistics were last reset (Unix timestamp) |
+| `pg_stat_database_active_time_seconds_total` | Counter | `datid`, `datname` | Time spent executing SQL statements in seconds (PostgreSQL 14+) |
+
+**Example PromQL:**
+```promql
+# Cache hit ratio
+rate(pg_stat_database_blks_hit[5m]) / 
+(rate(pg_stat_database_blks_hit[5m]) + rate(pg_stat_database_blks_read[5m]))
+
+# Transaction commit rate
+rate(pg_stat_database_xact_commit[1m])
+
+# Rollback ratio
+rate(pg_stat_database_xact_rollback[5m]) / 
+(rate(pg_stat_database_xact_commit[5m]) + rate(pg_stat_database_xact_rollback[5m]))
+
+# Temporary file usage
+rate(pg_stat_database_temp_bytes[5m])
+```
+
+---
+
+### Background Writer Statistics Collector
+
+**Collector name:** `stat_bgwriter` (enabled by default)
+
+Tracks background writer and checkpoint activity. Note: PostgreSQL 17+ moved checkpoint metrics to `stat_checkpointer`.
+
+| Metric Name | Type | Labels | Description | Version |
+|------------|------|--------|-------------|----------|
+| `pg_stat_bgwriter_checkpoints_timed_total` | Counter | none | Scheduled checkpoints performed | < PG 17 |
+| `pg_stat_bgwriter_checkpoints_req_total` | Counter | none | Requested checkpoints performed | < PG 17 |
+| `pg_stat_bgwriter_checkpoint_write_time_total` | Counter | none | Time spent writing checkpoint files in milliseconds | < PG 17 |
+| `pg_stat_bgwriter_checkpoint_sync_time_total` | Counter | none | Time spent syncing checkpoint files in milliseconds | < PG 17 |
+| `pg_stat_bgwriter_buffers_checkpoint_total` | Counter | none | Buffers written during checkpoints | < PG 17 |
+| `pg_stat_bgwriter_buffers_clean_total` | Counter | none | Buffers written by background writer | All |
+| `pg_stat_bgwriter_maxwritten_clean_total` | Counter | none | Times background writer stopped due to too many buffers | All |
+| `pg_stat_bgwriter_buffers_backend_total` | Counter | none | Buffers written directly by backends | < PG 17 |
+| `pg_stat_bgwriter_buffers_backend_fsync_total` | Counter | none | Times a backend had to execute its own fsync | < PG 17 |
+| `pg_stat_bgwriter_buffers_alloc_total` | Counter | none | Buffers allocated | All |
+| `pg_stat_bgwriter_stats_reset_total` | Counter | none | Time at which statistics were last reset (Unix timestamp) | All |
+
+**Example PromQL:**
+```promql
+# Checkpoint frequency
+rate(pg_stat_bgwriter_checkpoints_timed_total[5m]) + 
+rate(pg_stat_bgwriter_checkpoints_req_total[5m])
+
+# Average checkpoint write time
+rate(pg_stat_bgwriter_checkpoint_write_time_total[5m]) / 
+(rate(pg_stat_bgwriter_checkpoints_timed_total[5m]) + 
+ rate(pg_stat_bgwriter_checkpoints_req_total[5m]))
+```
+
+---
+
+### Checkpointer Statistics Collector
+
+**Collector name:** `stat_checkpointer` (disabled by default, PostgreSQL 17+ only)
+
+Replaces checkpoint metrics from bgwriter in PostgreSQL 17+.
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_stat_checkpointer_num_timed_total` | Counter | none | Number of scheduled checkpoints |
+| `pg_stat_checkpointer_num_requested_total` | Counter | none | Number of requested checkpoints |
+| `pg_stat_checkpointer_restartpoints_timed_total` | Counter | none | Number of scheduled restartpoints (standby only) |
+| `pg_stat_checkpointer_restartpoints_req_total` | Counter | none | Number of requested restartpoints (standby only) |
+| `pg_stat_checkpointer_restartpoints_done_total` | Counter | none | Number of completed restartpoints (standby only) |
+| `pg_stat_checkpointer_write_time_total` | Counter | none | Time spent writing checkpoint/restartpoint files in milliseconds |
+| `pg_stat_checkpointer_sync_time_total` | Counter | none | Time spent syncing checkpoint/restartpoint files in milliseconds |
+| `pg_stat_checkpointer_buffers_written_total` | Counter | none | Buffers written during checkpoints and restartpoints |
+| `pg_stat_checkpointer_stats_reset_total` | Counter | none | Time at which statistics were last reset (Unix timestamp) |
+
+---
+
+### Replication Collector
+
+**Collector name:** `replication` (enabled by default)
+
+Monitors replication lag and replica status.
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_replication_lag_seconds` | Gauge | none | Replication lag behind master in seconds |
+| `pg_replication_is_replica` | Gauge | none | Whether this server is a replica (1) or not (0) |
+| `pg_replication_last_replay_seconds` | Gauge | none | Age of last transaction replayed in seconds |
+
+**Example PromQL:**
+```promql
+# Alert on high replication lag
+pg_replication_lag_seconds > 60
+
+# Check if server is a replica
+pg_replication_is_replica == 1
+```
+
+---
+
+### Replication Slot Collector
+
+**Collector name:** `replication_slot` (enabled by default)
+
+Tracks replication slot status and lag.
+
+| Metric Name | Type | Labels | Description | Version |
+|------------|------|--------|-------------|----------|
+| `pg_replication_slot_slot_current_wal_lsn` | Gauge | `slot_name`, `slot_type` | Current WAL LSN position | All |
+| `pg_replication_slot_slot_confirmed_flush_lsn` | Gauge | `slot_name`, `slot_type` | Last LSN confirmed flushed to slot (active slots only) | All |
+| `pg_replication_slot_slot_is_active` | Gauge | `slot_name`, `slot_type` | Whether the slot is active (1) or not (0) | All |
+| `pg_replication_slot_safe_wal_size_bytes` | Gauge | `slot_name`, `slot_type` | Bytes that can be written before slot is in danger of being lost | PG 13+ |
+| `pg_replication_slot_wal_status` | Gauge | `slot_name`, `slot_type`, `wal_status` | Availability of WAL files (reserved/extended/unreserved) | PG 13+ |
+
+**Example PromQL:**
+```promql
+# Inactive replication slots
+pg_replication_slot_slot_is_active == 0
+
+# Replication slot lag in bytes
+pg_replication_slot_slot_current_wal_lsn - pg_replication_slot_slot_confirmed_flush_lsn
+```
+
+---
+
+### Locks Collector
+
+**Collector name:** `locks` (enabled by default)
+
+Tracks database locks by type and database.
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_locks_count` | Gauge | `datname`, `mode` | Number of locks by lock mode |
+
+**Lock modes:**
+- `accesssharelock` - Read-only queries
+- `rowsharelock` - SELECT FOR UPDATE/SHARE
+- `rowexclusivelock` - INSERT, UPDATE, DELETE
+- `shareupdateexclusivelock` - VACUUM (non-FULL), CREATE INDEX CONCURRENTLY
+- `sharelock` - CREATE INDEX
+- `sharerowexclusivelock` - Exclusive table lock
+- `exclusivelock` - DDL operations
+- `accessexclusivelock` - ALTER TABLE, DROP TABLE, TRUNCATE, VACUUM FULL
+- `sireadlock` - Serializable transactions
+
+**Example PromQL:**
+```promql
+# Total locks by database
+sum by (datname) (pg_locks_count)
+
+# Exclusive locks
+pg_locks_count{mode="accessexclusivelock"}
+```
+
+---
+
+### User Tables Statistics Collector
+
+**Collector name:** `stat_user_tables` (enabled by default)
+
+Per-table statistics for user tables.
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_stat_user_tables_seq_scan` | Counter | `datname`, `schemaname`, `relname` | Number of sequential scans |
+| `pg_stat_user_tables_seq_tup_read` | Counter | `datname`, `schemaname`, `relname` | Rows read by sequential scans |
+| `pg_stat_user_tables_idx_scan` | Counter | `datname`, `schemaname`, `relname` | Number of index scans |
+| `pg_stat_user_tables_idx_tup_fetch` | Counter | `datname`, `schemaname`, `relname` | Rows fetched by index scans |
+| `pg_stat_user_tables_n_tup_ins` | Counter | `datname`, `schemaname`, `relname` | Rows inserted |
+| `pg_stat_user_tables_n_tup_upd` | Counter | `datname`, `schemaname`, `relname` | Rows updated |
+| `pg_stat_user_tables_n_tup_del` | Counter | `datname`, `schemaname`, `relname` | Rows deleted |
+| `pg_stat_user_tables_n_tup_hot_upd` | Counter | `datname`, `schemaname`, `relname` | Rows HOT updated (no index update) |
+| `pg_stat_user_tables_n_live_tup` | Gauge | `datname`, `schemaname`, `relname` | Estimated live rows |
+| `pg_stat_user_tables_n_dead_tup` | Gauge | `datname`, `schemaname`, `relname` | Estimated dead rows |
+| `pg_stat_user_tables_n_mod_since_analyze` | Gauge | `datname`, `schemaname`, `relname` | Rows modified since last ANALYZE |
+| `pg_stat_user_tables_last_vacuum` | Gauge | `datname`, `schemaname`, `relname` | Last manual VACUUM time (Unix timestamp) |
+| `pg_stat_user_tables_last_autovacuum` | Gauge | `datname`, `schemaname`, `relname` | Last autovacuum time (Unix timestamp) |
+| `pg_stat_user_tables_last_analyze` | Gauge | `datname`, `schemaname`, `relname` | Last manual ANALYZE time (Unix timestamp) |
+| `pg_stat_user_tables_last_autoanalyze` | Gauge | `datname`, `schemaname`, `relname` | Last autoanalyze time (Unix timestamp) |
+| `pg_stat_user_tables_vacuum_count` | Counter | `datname`, `schemaname`, `relname` | Number of manual VACUUMs |
+| `pg_stat_user_tables_autovacuum_count` | Counter | `datname`, `schemaname`, `relname` | Number of autovacuums |
+| `pg_stat_user_tables_analyze_count` | Counter | `datname`, `schemaname`, `relname` | Number of manual ANALYZEs |
+| `pg_stat_user_tables_autoanalyze_count` | Counter | `datname`, `schemaname`, `relname` | Number of autoanalyzes |
+| `pg_stat_user_tables_index_size_bytes` | Gauge | `datname`, `schemaname`, `relname` | Total size of indexes in bytes |
+| `pg_stat_user_tables_table_size_bytes` | Gauge | `datname`, `schemaname`, `relname` | Table size in bytes |
+
+**Example PromQL:**
+```promql
+# Tables with high dead tuple ratio
+(pg_stat_user_tables_n_dead_tup / 
+ (pg_stat_user_tables_n_live_tup + pg_stat_user_tables_n_dead_tup)) > 0.2
+
+# Tables doing many sequential scans
+topk(10, rate(pg_stat_user_tables_seq_scan[5m]))
+
+# Index scan ratio
+rate(pg_stat_user_tables_idx_scan[5m]) / 
+(rate(pg_stat_user_tables_idx_scan[5m]) + rate(pg_stat_user_tables_seq_scan[5m]))
+```
+
+---
+
+### Statement Statistics Collector
+
+**Collector name:** `stat_statements` (disabled by default)
+
+Requires `pg_stat_statements` extension. Tracks query-level statistics.
+
+<Warning>
+This collector is disabled by default because it can create many timeseries on busy servers. Each unique query generates separate metrics.
+</Warning>
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_stat_statements_calls_total` | Counter | `user`, `datname`, `queryid` | Number of times query executed |
+| `pg_stat_statements_seconds_total` | Counter | `user`, `datname`, `queryid` | Total execution time in seconds |
+| `pg_stat_statements_rows_total` | Counter | `user`, `datname`, `queryid` | Total rows returned or affected |
+| `pg_stat_statements_block_read_seconds_total` | Counter | `user`, `datname`, `queryid` | Time spent reading blocks in seconds |
+| `pg_stat_statements_block_write_seconds_total` | Counter | `user`, `datname`, `queryid` | Time spent writing blocks in seconds |
+| `pg_stat_statements_query_id` | Counter | `queryid`, `query` | Maps queryid to actual SQL text (if enabled) |
+
+**Configuration flags:**
+- `--collector.stat_statements.include_query` - Include query text (disabled by default)
+- `--collector.stat_statements.query_length` - Maximum query text length (default: 120)
+- `--collector.stat_statements.limit` - Maximum number of queries to return (default: 100)
+- `--collector.stat_statements.exclude_databases` - Databases to exclude
+- `--collector.stat_statements.exclude_users` - Users to exclude
+
+**Example PromQL:**
+```promql
+# Slowest queries by total time
+topk(10, rate(pg_stat_statements_seconds_total[5m]))
+
+# Most frequently called queries
+topk(10, rate(pg_stat_statements_calls_total[5m]))
+
+# Average query execution time
+rate(pg_stat_statements_seconds_total[5m]) / 
+rate(pg_stat_statements_calls_total[5m])
+```
+
+---
+
+### WAL Collector
+
+**Collector name:** `wal` (enabled by default)
+
+Monitors Write-Ahead Log (WAL) files.
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_wal_segments` | Gauge | none | Number of WAL segments |
+| `pg_wal_size_bytes` | Gauge | none | Total size of WAL segments in bytes |
+
+**Example PromQL:**
+```promql
+# WAL growth rate
+rate(pg_wal_size_bytes[5m])
+
+# Alert on too many WAL files
+pg_wal_segments > 100
+```
+
+---
+
+### Postmaster Collector
+
+**Collector name:** `postmaster` (disabled by default)
+
+Tracks PostgreSQL server start time.
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_postmaster_start_time_seconds` | Gauge | none | Time at which postmaster started (Unix timestamp) |
+
+**Example PromQL:**
+```promql
+# Server uptime in hours
+(time() - pg_postmaster_start_time_seconds) / 3600
+
+# Detect recent restart
+time() - pg_postmaster_start_time_seconds < 300
+```
+
+---
+
+### Database Wraparound Collector
+
+**Collector name:** `database_wraparound` (disabled by default)
+
+Monitors transaction ID wraparound risk.
+
+| Metric Name | Type | Labels | Description |
+|------------|------|--------|-------------|
+| `pg_database_wraparound_age_datfrozenxid_seconds` | Gauge | `datname` | Age of oldest transaction ID not frozen |
+| `pg_database_wraparound_age_datminmxid_seconds` | Gauge | `datname` | Age of oldest multi-transaction ID |
+
+**Example PromQL:**
+```promql
+# Alert on wraparound risk (approaching 2 billion)
+pg_database_wraparound_age_datfrozenxid_seconds > 1800000000
+```
+
+---
+
+## Collector Status
+
+By default, the following collectors are **enabled**:
+- `database`
+- `stat_database`
+- `stat_bgwriter`
+- `replication`
+- `replication_slot`
+- `locks`
+- `stat_user_tables`
+- `wal`
+
+The following collectors are **disabled by default**:
+- `stat_statements` - High cardinality
+- `stat_checkpointer` - PostgreSQL 17+ only
+- `postmaster` - Limited usefulness
+- `database_wraparound` - Specialized monitoring
+
+Enable/disable collectors using:
+```bash
+--collector.<name>=true|false
+```
+
+For example:
+```bash
+postgres_exporter \
+  --collector.stat_statements=true \
+  --collector.postmaster=true \
+  --collector.locks=false
+```
+
+## Additional Collector Metrics
+
+Several other collectors are available. Consult the source code in `~/workspace/source/collector/` for complete details on:
+
+- `pg_buffercache_summary` - Buffer cache statistics
+- `pg_database_wraparound` - Transaction wraparound monitoring
+- `pg_long_running_transactions` - Long-running transaction tracking
+- `pg_process_idle` - Idle process monitoring
+- `pg_roles` - Role information
+- `pg_stat_activity_autovacuum` - Autovacuum activity
+- `pg_stat_progress_vacuum` - VACUUM progress
+- `pg_stat_walreceiver` - WAL receiver statistics
+- `pg_statio_user_indexes` - Index I/O statistics
+- `pg_statio_user_tables` - Table I/O statistics
+- `pg_xlog_location` - Transaction log location
+
+## See Also
+
+- [Exporter Metrics Reference](/reference/metrics/exporter-metrics) - Metrics about the exporter itself
+- [Configuration Reference](/reference/configuration-file) - Exporter configuration options
+- [Collectors Guide](/collectors/overview) - Detailed collector information

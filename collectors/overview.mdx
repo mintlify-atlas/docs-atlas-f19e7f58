@@ -1,0 +1,93 @@
+---
+title: Collectors Overview
+description: Understanding PostgreSQL Server Exporter collectors and how they work
+---
+
+Collectors are modular components in the PostgreSQL Server Exporter that gather specific types of metrics from your PostgreSQL database. Each collector focuses on a particular aspect of database monitoring, such as database size, replication status, or table statistics.
+
+## How Collectors Work
+
+When the exporter scrapes metrics from PostgreSQL:
+
+1. Each enabled collector queries PostgreSQL system views or functions
+2. The collector transforms the query results into Prometheus metrics
+3. Metrics are exposed at the `/metrics` endpoint
+4. Collectors run concurrently for efficient data collection
+
+All metrics are prefixed with `pg_` by default and include relevant labels for filtering and aggregation.
+
+## Collector States
+
+Each collector can be in one of two states:
+
+- **Enabled by default** - The collector runs automatically unless explicitly disabled
+- **Disabled by default** - The collector must be explicitly enabled to run
+
+You can check the default state of each collector in the documentation pages below.
+
+## Enabling and Disabling Collectors
+
+Collectors are controlled using command-line flags with the format `--collector.<name>` or `--no-collector.<name>`.
+
+### Enable a collector
+
+```bash
+postgres_exporter --collector.stat_statements
+```
+
+### Disable a collector
+
+```bash
+postgres_exporter --no-collector.database
+```
+
+### Using environment variables
+
+You can also control collectors through environment variables, though command-line flags take precedence:
+
+```bash
+export PG_EXPORTER_COLLECTOR_DATABASE=false
+```
+
+## Available Collectors
+
+The following collectors are available in the PostgreSQL Server Exporter:
+
+### Core Database Collectors
+
+- [Database](/collectors/database) - Database size and connection limits
+- [Locks](/collectors/locks) - Lock counts by database and mode
+- [Replication](/collectors/replication) - Replication lag and status
+- [WAL](/collectors/wal) - Write-Ahead Log segments and size
+
+### Statistics Collectors
+
+- [Database Statistics](/collectors/stat-database) - Transaction, block, and tuple statistics per database
+- [User Tables Statistics](/collectors/stat-user-tables) - Table-level access, modification, and maintenance statistics
+
+### Deprecated Features
+
+- [Custom Queries(../collectors/custom-queries) - Load custom SQL queries from YAML files ](deprecated)
+
+## Collector Performance
+
+Each collector execution is tracked with the following metrics:
+
+- `pg_scrape_collector_duration_seconds` - Time taken to execute the collector
+- `pg_scrape_collector_success` - Whether the collector succeeded (1) or failed (0)
+
+These metrics help you monitor the performance and reliability of individual collectors.
+
+## Collection Timeout
+
+You can set a global timeout for all collectors using the `--collection.timeout` flag:
+
+```bash
+postgres_exporter --collection.timeout=30s
+```
+
+When the timeout is reached, the database connection is dropped to prevent connection exhaustion.
+
+<Note>
+The default collection timeout is 1 minute. Set this value based on your database size and query complexity.
+</Note>

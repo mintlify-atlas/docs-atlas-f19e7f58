@@ -1,0 +1,206 @@
+---
+title: stat-bgwriter
+description: Reference documentation for the stat-bgwriter collector
+---
+
+The `stat_bgwriter` collector exposes statistics from the background writer and checkpointer processes.
+
+## Status
+
+**Default: Enabled**
+
+## Version-Specific Behavior
+
+<Warning>
+PostgreSQL 17 moved checkpoint-related metrics to the new `stat_checkpointer` view. When running PostgreSQL 17+, this collector only exposes background writer metrics.
+</Warning>
+
+## Metrics
+
+### Checkpoint Metrics (PostgreSQL less than  17)
+
+#### pg_stat_bgwriter_checkpoints_timed_total
+
+**Type:** Counter  
+**Description:** Number of scheduled checkpoints that have been performed
+
+#### pg_stat_bgwriter_checkpoints_req_total
+
+**Type:** Counter  
+**Description:** Number of requested checkpoints that have been performed
+
+#### pg_stat_bgwriter_checkpoint_write_time_total
+
+**Type:** Counter  
+**Description:** Total amount of time spent writing checkpoint files to disk, in milliseconds
+
+#### pg_stat_bgwriter_checkpoint_sync_time_total
+
+**Type:** Counter  
+**Description:** Total amount of time spent synchronizing checkpoint files to disk, in milliseconds
+
+#### pg_stat_bgwriter_buffers_checkpoint_total
+
+**Type:** Counter  
+**Description:** Number of buffers written during checkpoints
+
+### Background Writer Metrics (All Versions)
+
+#### pg_stat_bgwriter_buffers_clean_total
+
+**Type:** Counter  
+**Description:** Number of buffers written by the background writer
+
+#### pg_stat_bgwriter_maxwritten_clean_total
+
+**Type:** Counter  
+**Description:** Number of times the background writer stopped a cleaning scan because it had written too many buffers
+
+#### pg_stat_bgwriter_buffers_alloc_total
+
+**Type:** Counter  
+**Description:** Number of buffers allocated
+
+### Backend Metrics (PostgreSQL less than  17)
+
+#### pg_stat_bgwriter_buffers_backend_total
+
+**Type:** Counter  
+**Description:** Number of buffers written directly by a backend
+
+#### pg_stat_bgwriter_buffers_backend_fsync_total
+
+**Type:** Counter  
+**Description:** Number of times a backend had to execute its own fsync call
+
+### Statistics Reset
+
+#### pg_stat_bgwriter_stats_reset_total
+
+**Type:** Counter  
+**Description:** Time at which these statistics were last reset (Unix timestamp)
+
+## SQL Queries
+
+**PostgreSQL less than  17:**
+```sql
+SELECT
+  checkpoints_timed,
+  checkpoints_req,
+  checkpoint_write_time,
+  checkpoint_sync_time,
+  buffers_checkpoint,
+  buffers_clean,
+  maxwritten_clean,
+  buffers_backend,
+  buffers_backend_fsync,
+  buffers_alloc,
+  stats_reset
+FROM pg_stat_bgwriter;
+```
+
+**PostgreSQL 17+:**
+```sql
+SELECT
+  buffers_clean,
+  maxwritten_clean,
+  buffers_alloc,
+  stats_reset
+FROM pg_stat_bgwriter;
+```
+
+## PostgreSQL Versions
+
+**Supported:** All versions
+
+**Version changes:**
+- **PostgreSQL 17+:** Checkpoint metrics moved to `pg_stat_checkpointer`
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_stat_bgwriter` view (granted to `PUBLIC` by default)
+
+## Example Output
+
+**PostgreSQL less than  17:**
+```
+pg_stat_bgwriter_checkpoints_timed_total 1523
+pg_stat_bgwriter_checkpoints_req_total 45
+pg_stat_bgwriter_checkpoint_write_time_total 458932
+pg_stat_bgwriter_checkpoint_sync_time_total 1234
+pg_stat_bgwriter_buffers_checkpoint_total 98234
+pg_stat_bgwriter_buffers_clean_total 12453
+pg_stat_bgwriter_maxwritten_clean_total 89
+pg_stat_bgwriter_buffers_backend_total 45321
+pg_stat_bgwriter_buffers_backend_fsync_total 0
+pg_stat_bgwriter_buffers_alloc_total 234567
+pg_stat_bgwriter_stats_reset_total 1638000000
+```
+
+**PostgreSQL 17+:**
+```
+pg_stat_bgwriter_buffers_clean_total 12453
+pg_stat_bgwriter_maxwritten_clean_total 89
+pg_stat_bgwriter_buffers_alloc_total 234567
+pg_stat_bgwriter_stats_reset_total 1638000000
+```
+
+## Use Cases
+
+### Monitor Checkpoint Frequency
+
+```promql
+# Checkpoint rate (PostgreSQL less than  17)
+rate(pg_stat_bgwriter_checkpoints_timed_total[5m]) + 
+rate(pg_stat_bgwriter_checkpoints_req_total[5m])
+
+# Ratio of requested vs timed checkpoints
+rate(pg_stat_bgwriter_checkpoints_req_total[5m]) /
+(rate(pg_stat_bgwriter_checkpoints_timed_total[5m]) + 
+ rate(pg_stat_bgwriter_checkpoints_req_total[5m]))
+```
+
+### Backend Write Activity
+
+```promql
+# Backends writing directly to disk (not ideal)
+rate(pg_stat_bgwriter_buffers_backend_total[5m])
+```
+
+### Background Writer Effectiveness
+
+```promql
+# Times bgwriter hit maxwritten_clean limit
+rate(pg_stat_bgwriter_maxwritten_clean_total[5m])
+```
+
+## Tuning Recommendations
+
+### High `checkpoints_req`
+
+If requested checkpoints are high:
+- Increase `max_wal_size`
+- Increase `checkpoint_timeout`
+
+### High `buffers_backend`
+
+If backends are writing directly:
+- Increase `bgwriter_lru_maxpages`
+- Decrease `bgwriter_delay`
+- Increase `shared_buffers`
+
+### High `maxwritten_clean`
+
+If bgwriter is hitting limits:
+- Increase `bgwriter_lru_maxpages`
+
+## Migration to PostgreSQL 17
+
+If upgrading to PostgreSQL 17, use the `stat_checkpointer` collector for checkpoint metrics.
+
+## Related
+
+- [pg_stat_bgwriter view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-BGWRITER-VIEW)
+- [Background writer documentation](https://www.postgresql.org/docs/current/runtime-config-resource.html#RUNTIME-CONFIG-RESOURCE-BACKGROUND-WRITER)
+- [stat-checkpointer collector](/reference/collectors/stat-checkpointer) (PostgreSQL 17+)

@@ -1,0 +1,117 @@
+---
+title: process-idle
+description: Reference documentation for the process-idle collector
+---
+
+The `process_idle` collector exposes histogram metrics about idle server processes.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.process-idle`
+
+## Metrics
+
+### pg_process_idle_seconds
+
+**Type:** Histogram  
+**Description:** Idle time distribution of server processes
+
+**Labels:**
+- `state` - Connection state (e.g., `idle`, `idle in transaction`)
+- `application_name` - Application name from connection
+
+**Histogram Buckets:** 1, 2, 5, 15, 30, 60, 90, 120, 300 seconds
+
+## SQL Query
+
+```sql
+WITH
+  metrics AS (
+    SELECT
+      state,
+      application_name,
+      SUM(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - state_change))::bigint)::float AS process_idle_seconds_sum,
+      COUNT(*) AS process_idle_seconds_count
+    FROM pg_stat_activity
+    WHERE state ~ '^idle'
+    AND pid <> pg_backend_pid()
+    GROUP BY state, application_name
+  ),
+  buckets AS (
+    SELECT
+      state,
+      application_name,
+      le,
+      SUM(
+        CASE WHEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - state_change)) <= le
+        THEN 1
+        ELSE 0
+        END
+      )::bigint AS bucket
+    FROM
+      pg_stat_activity,
+      UNNEST(ARRAY[1, 2, 5, 15, 30, 60, 90, 120, 300]) AS le
+    WHERE pid <> pg_backend_pid()
+    GROUP BY state, application_name, le
+    ORDER BY state, application_name, le
+  )
+SELECT
+  state,
+  application_name,
+  process_idle_seconds_sum as seconds_sum,
+  process_idle_seconds_count as seconds_count,
+  ARRAY_AGG(le) AS seconds,
+  ARRAY_AGG(bucket) AS seconds_bucket
+FROM metrics JOIN buckets USING (state, application_name)
+GROUP BY 1, 2, 3, 4;
+```
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 9.2+ (when `state_change` column was added to `pg_stat_activity`)
+
+## Required Permissions
+
+The monitoring user needs:
+- Access to `pg_stat_activity` view
+
+## Example Output
+
+```
+pg_process_idle_seconds_bucket{state="idle",application_name="myapp",le="1"} 5
+pg_process_idle_seconds_bucket{state="idle",application_name="myapp",le="5"} 12
+pg_process_idle_seconds_bucket{state="idle",application_name="myapp",le="30"} 20
+pg_process_idle_seconds_sum{state="idle",application_name="myapp"} 450.5
+pg_process_idle_seconds_count{state="idle",application_name="myapp"} 25
+```
+
+## Use Cases
+
+### Monitoring Connection Pool Health
+
+Track how long connections spend idle:
+- High idle times may indicate oversized connection pools
+- Many connections idle in transaction indicate application bugs
+
+### Detecting Idle Connections
+
+```promql
+# Connections idle for more than 5 minutes
+rate(pg_process_idle_seconds_sum[5m]) > 300
+```
+
+### State Types Monitored
+
+- `idle` - Connection is waiting for a new query
+- `idle in transaction` - Connection has an open transaction but no active query
+- `idle in transaction (aborted)` - Transaction was aborted but not rolled back
+
+<Warning>
+`idle in transaction` connections hold locks and can prevent vacuum from cleaning up dead tuples. These should be monitored carefully.
+</Warning>
+
+## Related
+
+- [pg_stat_activity view](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW)

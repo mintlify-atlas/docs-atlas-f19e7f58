@@ -1,0 +1,311 @@
+---
+title: Binary Deployment
+description: Deploy PostgreSQL Server Exporter as a standalone binary
+---
+
+Deploy the PostgreSQL Server Exporter as a standalone binary on Linux, macOS, or BSD systems.
+
+## Download
+
+Download the latest release from the [GitHub releases page](https://github.com/prometheus-community/postgres_exporter/releases).
+
+Available architectures:
+- linux-amd64
+- linux-arm64
+- linux-armv7
+- linux-ppc64le
+- darwin-amd64
+- darwin-arm64
+- freebsd-amd64
+
+<Steps>
+  <Step title="Download the binary">
+    ```bash
+    wget https://github.com/prometheus-community/postgres_exporter/releases/download/v0.15.0/postgres_exporter-0.15.0.linux-amd64.tar.gz
+    ```
+    
+    Replace `v0.15.0` with the latest version and adjust the architecture as needed.
+  </Step>
+
+  <Step title="Extract the archive">
+    ```bash
+    tar xvfz postgres_exporter-0.15.0.linux-amd64.tar.gz
+    cd postgres_exporter-0.15.0.linux-amd64
+    ```
+  </Step>
+
+  <Step title="Move the binary to system path">
+    ```bash
+    sudo mv postgres_exporter /usr/local/bin/
+    sudo chmod +x /usr/local/bin/postgres_exporter
+    ```
+  </Step>
+
+  <Step title="Verify installation">
+    ```bash
+    postgres_exporter --version
+    ```
+  </Step>
+</Steps>
+
+## Building from Source
+
+To build the latest version from source:
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/prometheus-community/postgres_exporter.git
+    cd postgres_exporter
+    ```
+  </Step>
+
+  <Step title="Build the binary">
+    ```bash
+    make build
+    ```
+    
+    This requires Go 1.21 or later.
+  </Step>
+
+  <Step title="Install the binary">
+    ```bash
+    sudo mv postgres_exporter /usr/local/bin/
+    ```
+  </Step>
+</Steps>
+
+## Running the Exporter
+
+### Using Environment Variables
+
+<Steps>
+  <Step title="Set the data source name">
+    ```bash
+    export DATA_SOURCE_NAME="postgresql://postgres_exporter:password@localhost:5432/postgres?sslmode=disable"
+    ```
+    
+    Or use the split format:
+    ```bash
+    export DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable"
+    export DATA_SOURCE_USER="postgres_exporter"
+    export DATA_SOURCE_PASS="password"
+    ```
+  </Step>
+
+  <Step title="Start the exporter">
+    ```bash
+    postgres_exporter
+    ```
+    
+    The exporter will start on port 9187 by default.
+  </Step>
+
+  <Step title="Verify metrics">
+    ```bash
+    curl http://localhost:9187/metrics
+    ```
+  </Step>
+</Steps>
+
+### Using Password Files (Recommended)
+
+<Warning>
+Store database passwords in files with restricted permissions instead of environment variables.
+</Warning>
+
+<Steps>
+  <Step title="Create a password file">
+    ```bash
+    sudo mkdir -p /etc/postgres_exporter
+    echo "your_password" | sudo tee /etc/postgres_exporter/password.txt
+    sudo chmod 600 /etc/postgres_exporter/password.txt
+    ```
+  </Step>
+
+  <Step title="Set file ownership">
+    ```bash
+    sudo chown postgres_exporter:postgres_exporter /etc/postgres_exporter/password.txt
+    ```
+  </Step>
+
+  <Step title="Run with password file">
+    ```bash
+    export DATA_SOURCE_URI="localhost:5432/postgres?sslmode=require"
+    export DATA_SOURCE_USER="postgres_exporter"
+    export DATA_SOURCE_PASS_FILE="/etc/postgres_exporter/password.txt"
+    postgres_exporter
+    ```
+  </Step>
+</Steps>
+
+### Using Configuration File
+
+For multi-target deployments:
+
+<Steps>
+  <Step title="Create a configuration file">
+    Create `/etc/postgres_exporter/postgres_exporter.yml`:
+    ```yaml
+    auth_modules:
+      primary:
+        type: userpass
+        userpass:
+          username: postgres_exporter
+          password: primary_password
+        options:
+          sslmode: require
+      replica:
+        type: userpass
+        userpass:
+          username: postgres_exporter
+          password: replica_password
+        options:
+          sslmode: require
+    ```
+  </Step>
+
+  <Step title="Set file permissions">
+    <Warning>
+    Configuration files may contain sensitive credentials. Protect them with appropriate permissions.
+    </Warning>
+
+    ```bash
+    sudo chmod 600 /etc/postgres_exporter/postgres_exporter.yml
+    sudo chown postgres_exporter:postgres_exporter /etc/postgres_exporter/postgres_exporter.yml
+    ```
+  </Step>
+
+  <Step title="Run with configuration file">
+    ```bash
+    postgres_exporter --config.file=/etc/postgres_exporter/postgres_exporter.yml
+    ```
+  </Step>
+</Steps>
+
+## Command-Line Flags
+
+Common flags:
+
+```bash
+postgres_exporter \
+  --web.listen-address=":9187" \
+  --web.telemetry-path="/metrics" \
+  --config.file="/etc/postgres_exporter/postgres_exporter.yml" \
+  --log.level="info" \
+  --log.format="logfmt"
+```
+
+### Available Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--web.listen-address` | `:9187` | Address to listen on |
+| `--web.telemetry-path` | `/metrics` | Path for metrics endpoint |
+| `--config.file` | `postgres_exporter.yml` | Configuration file path |
+| `--log.level` | `info` | Log level (debug, info, warn, error) |
+| `--log.format` | `logfmt` | Log format (logfmt, json) |
+| `--disable-default-metrics` | `false` | Disable built-in metrics |
+| `--disable-settings-metrics` | `false` | Disable pg_settings metrics |
+| `--extend.query-path` | - | Path to custom queries YAML |
+
+See all available flags:
+```bash
+postgres_exporter --help
+```
+
+## Running as Non-Root User
+
+<Steps>
+  <Step title="Create a dedicated user">
+    ```bash
+    sudo useradd --system --no-create-home --shell /bin/false postgres_exporter
+    ```
+  </Step>
+
+  <Step title="Create directories">
+    ```bash
+    sudo mkdir -p /etc/postgres_exporter
+    sudo mkdir -p /var/log/postgres_exporter
+    sudo chown postgres_exporter:postgres_exporter /etc/postgres_exporter
+    sudo chown postgres_exporter:postgres_exporter /var/log/postgres_exporter
+    ```
+  </Step>
+
+  <Step title="Run as the dedicated user">
+    ```bash
+    sudo -u postgres_exporter DATA_SOURCE_URI="localhost:5432/postgres?sslmode=disable" \
+      DATA_SOURCE_USER="postgres_exporter" \
+      DATA_SOURCE_PASS_FILE="/etc/postgres_exporter/password.txt" \
+      postgres_exporter
+    ```
+  </Step>
+</Steps>
+
+## Local Socket Connection
+
+For local PostgreSQL installations using Unix sockets:
+
+```bash
+sudo -u postgres DATA_SOURCE_NAME="user=postgres host=/var/run/postgresql/ sslmode=disable" \
+  postgres_exporter
+```
+
+This is the recommended approach for local deployments on Debian/Ubuntu systems.
+
+## Multiple Databases
+
+To scrape multiple databases from a single exporter instance:
+
+```bash
+export DATA_SOURCE_NAME="port=5432,port=6432"
+postgres_exporter
+```
+
+Or use multi-target mode with a configuration file (see [Multi-Target Support](/configuration/multi-target)).
+
+## Custom Queries
+
+To add custom metrics:
+
+<Steps>
+  <Step title="Create a queries file">
+    Create `/etc/postgres_exporter/queries.yaml` with your custom queries.
+  </Step>
+
+  <Step title="Run with custom queries">
+    ```bash
+    postgres_exporter --extend.query-path=/etc/postgres_exporter/queries.yaml
+    ```
+  </Step>
+</Steps>
+
+## Security Considerations
+
+<Warning>
+- Never run as root in production
+- Use password files instead of environment variables
+- Set file permissions to 600 for password and config files
+- Use SSL/TLS connections to PostgreSQL (`sslmode=require`)
+- Limit network access to the metrics endpoint (port 9187)
+- Create a dedicated database user with minimal privileges
+- Consider using systemd for process management (see [systemd deployment](/deployment/systemd))
+</Warning>
+
+## Verifying the Deployment
+
+Check that metrics are being collected:
+
+```bash
+curl -s http://localhost:9187/metrics | grep pg_up
+```
+
+You should see:
+```
+pg_up 1
+```
+
+Check for errors in the logs:
+```bash
+postgres_exporter --log.level=debug
+```

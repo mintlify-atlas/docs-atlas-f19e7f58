@@ -1,0 +1,75 @@
+---
+title: postmaster
+description: Reference documentation for the postmaster collector
+---
+
+The `postmaster` collector exposes the PostgreSQL server start time.
+
+## Status
+
+**Default: Disabled**
+
+Enable with: `--collector.postmaster`
+
+## Metrics
+
+### pg_postmaster_start_time_seconds
+
+**Type:** Gauge  
+**Description:** Time at which postmaster started (Unix timestamp)
+
+**Labels:** None
+
+## SQL Query
+
+```sql
+SELECT extract(epoch from pg_postmaster_start_time) 
+FROM pg_postmaster_start_time();
+```
+
+## PostgreSQL Versions
+
+**Supported:** PostgreSQL 9.1+
+
+The `pg_postmaster_start_time()` function was introduced in PostgreSQL 9.1.
+
+## Required Permissions
+
+The monitoring user needs:
+- Execute permission on `pg_postmaster_start_time()` function (granted to `PUBLIC` by default)
+
+## Example Output
+
+```
+pg_postmaster_start_time_seconds 1638360000
+```
+
+## Use Cases
+
+### Tracking Uptime
+
+Calculate server uptime:
+```promql
+time() - pg_postmaster_start_time_seconds
+```
+
+### Detecting Restarts
+
+Detect when PostgreSQL has restarted:
+```promql
+changes(pg_postmaster_start_time_seconds[5m]) > 0
+```
+
+### Alert on Unexpected Restarts
+
+```yaml
+- alert: PostgreSQLRestarted
+  expr: changes(pg_postmaster_start_time_seconds[5m]) > 0
+  annotations:
+    summary: "PostgreSQL has restarted"
+    description: "PostgreSQL on {{ $labels.instance }} restarted {{ $value }} times in the last 5 minutes"
+```
+
+## Related
+
+- [pg_postmaster_start_time]() function](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-SIGNAL)
